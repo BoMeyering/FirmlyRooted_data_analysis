@@ -1,0 +1,100 @@
+---
+title: 'Propagation Trial: Data Analysis and Publication Roadmap'
+author: "Bo Meyering, Gabriel Pugina"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r}
+library(knitr)
+```
+
+## Introduction
+
+
+## Data Types Collected
+
+The PROP_ADAIR trial contains the most complete and available data out of both sites. The data can be segmented into a few main categories. Growth and Development data, Nutrient data, and Root Architecture/Excavation Data types. All of the growth and development data is well structured, tabular data that is readily amenable to standard analyses, as are the nutrient data. However, this is not the case with the root architecture and excavation data. We have a variety of mixed data types such as rhizotron files, video files, time series data from sensors, as well as image stills that need to be analyzed and data extracted from them. We will have to think carefully about this and plan out the analysis so that we get outputs that are easy for us to model effectively. Currently the main data types we have available are shown in table 1 below
+
+```{r echo=FALSE}
+tbl1_df <- data.frame("Data Type" = c('1yr growth measurements', '1yr canopy ratings', '2yr growth measurements', '2yr canopy ratings', '2yr LAI', 'Phytopthora Assays', 'SRL', 'Leaf nutrient analysis', 'Soil nutirent analysis (bulk)', 'Soil moisture', 'Soil density', 'Rhizotron images', 'Manual root crown measurements', 'IMU sensor data', 'Excavation video footage', 'Force gauge data', 'Root crown vertical images', 'Root crown horizontal images'),
+                      "PROP_ADAIR" = c("X", "X", "X", "X", "X", "Partial", "?", "X", "X", "X", "X", "X", "X", "X", "X", "X", "X", "X"), 
+                      "PROP_PICOS"=c("Maybe Kim?", "Maybe Kim?", "X", "X", "X", NA, "?", "X", "X", "X", "X", NA, "X", NA, "X", "X", "X", "X"))
+
+table_1 <- kable(tbl1_df)
+table_1
+```
+
+Out of the growth data, we have all of the normal rootstock and scion diameters, tree canopy height and canopy widths. The ratings include canopy disease indices, color ratings, and thickness ratings. For the PROP_ADAIR trial we collected this data at the end of year 1 and year 2. For the Picos trial this was only collected at the end of year 2 before the tree excavations took place. However, Kim might have some other data types from the first year so we should talk with him. LAI measurements were taken for each tree in the trial before excavation as well. Those raw data files have been processed and are ready to be analyzed.
+
+Initially we planned to do regular phytophthora analyses throughout the year in the ADAIR trial but we had some issues getting a good positive control. In addition to that, the fibrous roots from the trees on the western row in the ADAIR trial were heavily intertwined with roots from the nearby Eucalyptus trees, thus hindering our efforts to collect good samples. As it is, the phytopthora data covers only the Eastern row and one block or so on the Western row. This datat was not collected in the PROP_PICOS.
+
+As for SRL, I thought that we collected this data at some point but haven't been able to find it anywhere. Perhaps Gabe might know? It isn't in my project directory.
+
+Leaf nutrient analyses were conducted on a plot by plot basis and so are ready for analysis. We included the soil nutrient analysis, but only as bulked samples for each row, so these data will just be used for reporting purposes only.
+
+Soil moisture and soil density were taken at the time of excavation for each tree, and the data are on the tree basis, and might be used to normalize some of the excavation force data.
+
+The root architecture and excavation data comprise a wide variety of data types that need to be processed before data can be reliably extracted from them. Namely we have video footage of each tree excavation, IMU time series data for tree angles (PROP_ADAIR only). These same angle data can be extracted from the video footage, albeit with a bit more work that can't be automated. I originally had Franco help out with the angle extraction but after checking a few of the data sheets that he did, I think we will have to redo them. We also have the force gauge data from most of the tree excavations. Most, because a lot of the excavations were interrupted due to faulty strap placement, straps breaking, and/or not starting the force gauge on accident. As a rough estimate though, I would say we have at least 90-95% complete force gauge profiles out of all the trees we excavated. So analyzing the data will have to take into account the unbalanced nature of the design. 
+
+Finally, we have two main sets of still images. The first set is each root crown hung horizontally so that the camera is pointed down the main trunk axis and the root segments are fanned out in a radial fashion. The second set of images are the vertically hung root systems so that the vertical distribution of roots in the soil could be analyzed properly. These root crowns were rotated in 60 degree increments so we had a total of 6 pictures to analyze.
+
+## Materials and Methods
+
+### Field Establishment
+
+Two citrus field trials were planted on the East coast of Florida in St. Lucie County and Indian River County in the November of 2019. The St. Lucie County site (PROP_PICOS, designated Field_1) had flatwoods sandy soils, and the Indian River County site (PROP_ADAIR, designated Field_2) had heavier soils with high clay content and a high water table. Both trials included grafted Valencia trees on 4 different rootstocks (US-812, US-897, US-942, and US-1516) in combination with several different rootstock propagation methods – seedling propagated (SD), cutting (CT) and micropropagation (MPG). The experiments were set up as complete block split plot designs with the rootstock as the main plot factor and the propagation method as a sub-plot factor. There was a total of 6 blocks/replications. Trees were both under standard management.
+
+### Rhizotron Installation
+
+After the trees were planted, half-length mini rhizotron tubes (0.5m long) were installed approximately 30.5cm away from the North side of the trunk of one tree in each plot. The tubes were installed vertically with a 6" of tube protruding from the surface of the soil. To prevent sunlight from penetrating the interior of the tube and thus affecting root growth, the above ground portion of the tubes were painted with outdoor grade, matte black spray paint. We then used duct tape wrapped around the top of the tube and capped them with 3.5" PVC caps, adjusting the number of duct tape wraps until the cap fit snugly on the tube to prevent water intrusion. Additionally, because of the heavy soils and high water table, we placed landscaping tiles on top of the tube caps to weigh them down which prevented the soil water from expelling the rhizotron tube from the soil. 
+
+After letting the tubes acclimate for 4 months, we took images every month. Our first data point was taken at the end of February, but due to the COVID quarantine, we weren't able to get into the field again until the beginning of May. We continued to take pictures every month until November of 2021 when the trial was terminated.
+
+Need to talk about the analysis methods and if we need to redo the analysis using a different method. Currently, we have the analysis for every other month of images, but the format is strange and I don't really understand how Adam analyzed the individual time points. Gabe has been playing around with some new software called RootPainter which trains machine learning models on the root images with corrective functionality. This might make batch image measurements a bit easier than using the WinRhizotron MF software.
+
+### Tree Growth and Ratings
+Rootstock and scion circumference were measured at 5cm above and below the graft union using a soft, flexible measuring tape. Tree height was measured from the base of the soil to the average top of the tree canopy (i.e. not meausring to the very top leaf of the canopy but drawing an average of the canopy). The canopy width, orthogonal to the row and parallel to the row were also measured using the same methods. Tree canopy volume was computed as $treeheight*canopywidth1*canopywidth2/4$ according to Castle 1995. 
+
+Canopy ratings were conducted at the same time as tree measurements. Canopy color ratings were measured on a 1-5 scale with 1 being a very yellow, unhealthy tree canopy and 5 representing a dark green, healthy canopy. Canopy thickness ratings were measured on a 1-5 scale with 1 being a very thin, sickly canopy, and 5 being equal to a thick canopy that you cannot see through. Finally, canopy disease index ratings were conducted on a 1-5 scale with 1 equal to 0% foliar HLB symptoms, and 5 being equal to a canopy with 75-100% foliar HLB symptoms. All ratings were taken on both sides of the tree on either side of the row. Both the growth measurements and the canopy ratings were conducted at the end of the second year of growth for Field_1 and at the end of the first and second year in Field_2.
+
+### Canopy Leaf Area Index
+
+### Soil Moisture and Soil Density
+
+At the end of the second year of growth, before excavating the trees, we took soil moisture and soil density measurements around each tree. Soil density was measured in 4 locations around the tree using a Turf-Tec Digital Soil Compaction Meter and expressed in kPa. Soil moisture was measured in a similar fashion by using a Field Scout TDR 350 moisture meter with 8 inch soil probes attached. Soil moisture was expressed as a percentage which represents volumetric water content.
+
+### Phytopthora Deteciton
+
+Soil and fibrous root tissues were sampled in the fall of 2021 and tested for the presence of phytophthora species using the Agdia Phytophtora ELISA kit. This was only performed for Field_2
+
+### Leaf and Soil Nutrient Analysis
+
+For both Field_1 and Field_2 we collected 32 leaves from the two trees in each plot. The leaves were sampled randomly from the two trees' canopies. Only mature, fully expanded leaves without significant disease or insect damage were chosen. The leaves were collected in plastic sample bags and placed on ice until transported back to the lab. Bulk soil samples from each of the two rows in both field trials were sampled using a standard soil probe. The pooled samples were mixed well and a standard sized paper soil sample bag was filled with the soil. Both the leaf and soil samples were shipped to Waters Agricultural Laboratory for macro and micro nutrient analysis.
+
+### Tree Excavation
+
+After two full years in the field, trees were excavated with electric truck winch and the force profiles were measured with a digital force gauge (Shimpo). A full diagram of the excavation setup can be seen in figure 1, but briefly three large gauge eye bolts were drilled into the trunk of the trees 6-12 inches above the ground level. One was drilled into the back of the tree inline with the direction of the pull of the winch, and then two eye bolts were attached on the sides of the tree, orthogonal to the direction of wind pull at the same height as the first bolt. Then, tie down straps (10,000 lb load rating) were wrapped around the tree, snugly fastened directly underneatht the bolts. We constructed a cable connector with hooks on either end that were rated for 10000 lb. One end of the cable connector was looped through the free end of the tie-down straps fastened to the tree trunk, while the other was connected to the lift ring of a digital force gauge. Then the hook on the truck winch was attached to the lift ring on the force gauge that was opposite the tree. In this fashion we created a linked system of cables to grip the tree trunk while being able to measure the force profile of the excavation process with the winch.
+
+A two foot long 3/4" pvc pipe was made with black markings 16" apart from each other. This was pounded into the soil at a distance of 16" from the base of the tree on the side of the tree opposite of the direction of the pulling force so that it was inline with the cable system. We ensured that the pipe was installed vertically at an angle as close as possible to 90 degrees with the soil surface. 
+
+For the research trial in Field_2 we also installed some inertial moment unit sensors (WitMotion WT901BLECL) on the trunk of the tree, opposite of the direction of the pull. This were installed vertically on the trunk and fastened with duct tape. To the trunk. 
+
+Trees were extracted under constant speed with a 6000lb truck winch which was connected to a constant power source. Trees were extracted until the entire root structure either came out of the ground or was broken off in the soil. The force gauge was connected to a field laptop by a usb cable and the data was captured live with a program from Shimpo (EDMS-FG V4.6.2). Data from the IMU sensors was collected over Bluetooth through the Witmotion app on an Android tablet. 
+
+Each tree trunk was marked with a sharpie to indicate the overall direction of winch pull. 
+### Root System Measurements
+
+### Root System 
+
+## Challenges Faced
+
+
+## Roadmap Ahead
+
