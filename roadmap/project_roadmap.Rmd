@@ -88,8 +88,20 @@ For the research trial in Field_2 we also installed some inertial moment unit se
 
 Trees were extracted under constant speed with a 6000lb truck winch which was connected to a constant power source. Trees were extracted until the entire root structure either came out of the ground or was broken off in the soil. The force gauge was connected to a field laptop by a usb cable and the data was captured live with a program from Shimpo (EDMS-FG V4.6.2). Data from the IMU sensors was collected over Bluetooth through the Witmotion app on an Android tablet. 
 
-Each tree trunk was marked with a sharpie to indicate the overall direction of winch pull. 
+Each tree trunk was marked with a sharpie to indicate the overall direction of winch pull. For the vast majority of root crowns, many roots broke off after a certain distance from the trunk or were shorter roots. For longer main, structural roots arising from the crown that did not break off during the excavation process, these were clipped to a distance of 2 feet from the tree trunk. The soil level was also marked in sharpie as a line circumscribing the base of the tree where the trunk met the soil. The tree root systems were dried in a climate controlled room at approximately 70-80F for several months until they were ready to be analyzed. 
+
 ### Root System Measurements
+
+We took general measurements on the overall structure of each root crown. We first measured the total depth of the root system as the distance from the soil level line to the deepest portion of the root crown that had roots with a diameter greater than 5mm. Stump depth was a measurement akin to the root crown depth, but instead measured the distance from the soil level to the deepest portion of the root crown where there was a central rooting structure such as a taproot or a dense conglomeration of sinker roots. Additionally, we recorded the diameter of the root crown at the soil level and at the deepest portion of the root crown rooting structure where we measured the stump depth. Finally, recorded the dry weight of each root system.
+
+### Individual Root Measurements
+
+Individual roots arising from the root crown were measured and categorized
+
+### Individual Root Measurements
+We then took general measurements on each root system. Each individual root greater than 5mm in diameter arising from the root crown was scored according to the following system.
+
+### Root System Imaging
 
 ### Root System 
 
