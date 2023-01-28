@@ -21,4 +21,23 @@ This repo holds all of the code needed to analyze data collected for the PROP_ex
 ### Modeling
 1. We should structure the modeling based on the paper that it will be published in. We need to figure out the paper structures first
 
-
+|Data Type|Prop_ADAIR|PROP_PICOS|
+|---------|----------|----------|
+|1yr growth|X|Maybe Kim?|
+|1yr canopy ratings|X|Maybe Kim?|
+|2yr growth|X|X|
+|2yr canopy ratings|X|X|
+|2yr LAI|X|X|
+|2yr HLB qPCR assay|X|X|
+|Phytophthora assays|X||
+|Leaf nutrient analysis|X|X|
+|Soil nutrient analysis (bulk)|X|X|
+|Soil moisture|X|X|
+|Soil density|X|X|
+|Rhizotron images|X||
+|Manual root crown measurements|X|X|
+|IMU sensor data|X||
+|Excavation video footage|X|X|
+|Force gauge data|X|X|
+|Root crown vertical images|X|X|
+|Root crown radial images|X|X|
