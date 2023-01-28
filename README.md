@@ -2,7 +2,12 @@
 This repo holds all of the code needed to analyze data collected for the PROP_excavation trials
 
 Contents
-- [To Do List](##to-do)
+- [To Do List](#to-do)
+- [General](#general)
+- [Data Prep](#data-prep)
+- [Code](#code)
+- [Modeling](#modeling)
+
 ## TO DO
 ### General
 1. Finish data analysis roadmap
