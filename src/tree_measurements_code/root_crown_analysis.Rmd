@@ -1,0 +1,49 @@
+---
+title: "PROP TRIAL - Excavation Data Analysis"
+author: "Bo Meyering"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options(knitr.kable.na = '')
+```
+
+
+```{r, library import, echo=FALSE, message=FALSE,warning=FALSE}
+library(tidyverse)
+library(lme4)
+library(lmerTest)
+library(readxl)
+```
+
+
+```{r, raw data import, echo = FALSE, warning =FALSE}
+adair_roots <- read_excel('PROP_ADAIR/root_crown_data/prop_adair_root_measurement.xlsx', na = 'NA')
+adair_crown <- read_excel('PROP_ADAIR/root_crown_data/prop_adair_root_system_measurement.xlsx', na = 'NA')
+
+picos_roots <- read_excel('PROP_PICOS/root_crown_data/prop_picos_root_measurement.xlsx', na = 'NA')
+picos_crown <- read_excel('PROP_PICOS/root_crown_data/prop_picos_root_system_measurement.xlsx', na = 'NA')
+```
+
+```{r, raw data cleaning and preprocessing, echo=FALSE, warning=FALSE, message=FALSE}
+picos_roots$n_branch_seg <- str_remove(picos_roots$n_branch_seg, ' ')
+picos_roots$n_branch_seg <- str_replace(picos_roots$n_branch_seg, '\\(<', '\\(all<')
+
+picos_roots <- picos_roots %>% 
+        mutate(extra = sys_id) %>% 
+        separate(extra, into = c('row', 'tree')) %>% 
+        mutate(row = str_pad(row, width =2, side = 'left', pad = '0'), # pad row
+               tree = str_pad(tree, width = 2, side = 'left', pad = '0'), # pad tree
+               n_branch = as.numeric(as.vector(str_match(picos_roots$n_branch_seg, pattern = '^(\\d+)\\(*')[,2])),# capture first number
+               branch_sub5mm = as.vector(str_match(picos_roots$n_branch_seg, pattern = '(\\d+)<')[,2]), # capture second number
+               all_branch_sub5mm = as.vector(str_match(picos_roots$n_branch_seg, 'all')),
+               n_br_lt5mm = as.numeric(ifelse(is.na(picos_roots$all_branch_sub5mm) == TRUE, picos_roots$branch_sub5mm)))
+
+
+
+
+
+```
+

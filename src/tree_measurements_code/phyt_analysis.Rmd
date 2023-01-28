@@ -1,0 +1,190 @@
+---
+title: "PROP_ADAIR - Phytophthora Analysis"
+output: html_document
+date: '2022-05-11'
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options(knitr.kable.NA = '')
+```
+
+Samples were analyzed for Phytophthora by the Agdia Phytophtora ELISA kit. Samples were collected from both rows, but unfortunately citrus roots were difficult to obtain from trees in row 17W as most of the root mass surrounding the trees were from the Eucalyptus trees.
+
+Since there were very few samples from the 17W, I subset the data and only analyzed the samples from 17E to obtain a balanced experimental design. Each sample was run in duplicate on the microplate and the resulting values were averaged across the 2 tree plots.
+
+
+```{r import and cleaning, echo=FALSE, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(agricolae)
+library(knitr)
+library(kableExtra)
+library(readxl)
+
+
+
+
+phy_data <- read_excel("C:/Users/bbmeyering/OneDrive - University of Florida/projects/field_projects/PROP_excavation/PROP_ADAIR/assays/PROP_ADAIR_ELISA_Phytophthora_results.xlsx", na = "NA")
+
+layout <- read_excel("C:/Users/bbmeyering/OneDrive - University of Florida/projects/field_projects/PROP_excavation/PROP_ADAIR/assays/layout.xlsx", col_types = c("text", "text", "text", "text", "text", "text"), na = "NA")
+
+layout$row <- tolower(layout$row)
+phy_data$tree <- as.character(phy_data$tree)
+
+data1 <- phy_data %>% 
+        left_join(layout, by = c("tree", "row")) %>% 
+        select(row, tree, type, rs, prop, rhizotron, duplicates_avg, Results) %>% 
+        mutate(pos = ifelse(Results == "POSITIVE", 1, 0)) %>% 
+        rename(value = duplicates_avg) %>% 
+        filter(row == '17e') %>% 
+        mutate(block = as.factor(rep(1:3, each = 24))) %>% 
+        group_by(block, rs, prop) %>% 
+        summarize(value = mean(value))
+
+data2 <- phy_data %>% 
+        left_join(layout, by = c("tree", "row")) %>% 
+        select(row, tree, type, rs, prop, rhizotron, duplicates_avg, Results) %>% 
+        mutate(pos = ifelse(Results == "POSITIVE", 1, 0)) %>% 
+        rename(value = duplicates_avg) %>% 
+        filter(row == '17e') %>% 
+        mutate(block = as.factor(rep(1:3, each = 24)))
+
+
+averages <- data1 %>% 
+        group_by(rs, prop) %>% 
+        summarize(avg_reading = mean(value),
+                  SD = sd(value, na.rm = TRUE))
+
+
+
+prop <- data2 %>% 
+        group_by(rs, prop) %>% 
+        mutate(count = n(), 
+               sum = sum(pos), 
+               proportion = sum/count) %>% 
+        summarize('Percent Pos' = round(mean(proportion),4)*100)
+
+data1$rs <- as.factor(data1$rs)
+data1$prop <- as.factor(data1$prop)
+data1$block <- as.factor(data1$block)
+
+```
+
+The table below shows the average value for each rs:prop combination. The cutoff value for positive samples is approx 0.37.
+
+```{r average values, echo=FALSE}
+kable(averages, caption = 'Mean Values of Raw Readings by Combination') %>% 
+        kable_styling(position = 'left', full_width = FALSE)
+
+```
+
+```{r proportion values, echo=FALSE}
+kable(prop, caption = 'Percentage of Positive Samples by Combination') %>% 
+        kable_styling(position = 'left', full_width = FALSE)
+```
+
+
+### Raw Data ANOVA Results
+
+```{r, raw value graph, echo=FALSE}
+ggplot(data1, aes(x = rs, y = value, fill = rs))+
+        geom_violin()+
+        geom_hline(yintercept = .37, linetype = 'dashed')+
+        facet_wrap(~toupper(prop))+
+        scale_fill_viridis_d(option = 'D', begin = .3, end = .8)+
+        labs(title ="Raw Phytophthora ELISA Results",
+             subtitle = 'Dashed line is the positive cutoff',
+             fill = 'Rootstock',
+             x = "Rootstock",
+             y = 'Test Result')+
+        theme(axis.text.x = element_text(angle = 45))
+```
+
+```{r}
+
+lm1 <- lm(value ~ rs*prop, data1)
+
+summary(lm1)
+```
+
+Block factors were removed as they were insignificant at p>0.70.
+
+```{r lm1 anova_table, echo=FALSE}
+kable(anova(lm1), caption = 'Raw Data Linear Model ANOVA Results') %>% 
+        kable_styling(position = 'left', full_width = FALSE)
+```
+
+
+### Log Transformed Data ANOVA Results
+
+The qqplot for the raw data indicated deviations from normality so the data was log transformed for the following ANOVA.
+
+```{r log trans values, echo=FALSE}
+ggplot(data1, aes(x = rs, y = log(value), fill = rs))+
+        geom_violin()+
+        geom_hline(yintercept = log(.37), linetype = 'dashed')+
+        facet_wrap(~toupper(prop))+
+        scale_fill_viridis_d(option = 'D', begin = .3, end = .8)+
+        labs(title ="Log Transformed Phytophthora ELISA Results",
+             subtitle = 'Dashed line is the positive cutoff',
+             fill = 'Rootstock',
+             x = "Rootstock",
+             y = 'Test Result (log transformed)')+
+        theme(axis.text.x = element_text(angle = 45))
+```
+
+
+
+```{r lm2}
+lm2 <- lm(log(value) ~ rs*prop, data1)
+
+summary(lm2)
+anova(lm2)
+```
+
+Block effects were removed as they were insignificant at p > 0.89
+
+```{r, lm2 anova_table, echo=FALSE}
+kable(anova(lm2), caption = 'Log Transformed Linear Model ANOVA') %>% 
+        kable_styling(position = 'left', full_width = FALSE)
+```
+
+```{r}
+ggplot(averages, aes(x = rs, y = avg_reading, linetype = prop, group = prop))+
+        geom_line(size = 1)+
+        labs(title = "Interaction Plot for Phytophthora Results",
+             x = 'Rootstock',
+             y = 'Average Reading',
+             linetype = 'Propagation\nMethod')
+```
+
+While it appears that there was an overall trend that the values were higher for US-812 and US-897 for the MPG and SD propgation methods and lower in the CT propagated plants, the interaction was not significant at the 0.05 level. This is probably due to the fact that we only have three replicates for each combination since we only had a few samples from row 17W. 
+
+
+```{r lm2 HSD table, echo=FALSE, include=FALSE}
+hsd2 <- HSD.test(lm2, c('rs', 'prop'))
+df2 <- data.frame(Combination = rownames(hsd2$groups), groups = hsd2$groups) %>% 
+        left_join(data.frame(Combination = rownames(hsd2$means), SD = hsd2$means$std), by = 'Combination') %>% 
+        select(Combination, groups.log.value., SD, groups.groups) %>% 
+        rename(Value = groups.log.value., Letter = groups.groups)
+        
+
+kable(df2) %>% 
+        kable_styling(position = 'left', full_width = FALSE)
+```
+
+### Logistic Regression Model
+
+
+I also tried a logistic regresssion model to test whether or not the binary response variable (positive or negative) could be linked to any rootstock or not. However, after looking at the coefficients below, none are close to being significant. It would seem that the positive samples are distributed in a fairly random fashion both across the field and rootstock/propagation method combinations.
+
+```{r}
+
+log1 <- glm(pos ~ rs*prop, data = data2, family = 'binomial')
+summary(log1)
+```
+
+
+
+
+
