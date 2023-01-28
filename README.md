@@ -1,7 +1,8 @@
 # AlbrechtPropExcavation
 This repo holds all of the code needed to analyze data collected for the PROP_excavation trials
 
-
+Contents
+- [To Do List](##to-do)
 ## TO DO
 ### General
 1. Finish data analysis roadmap
