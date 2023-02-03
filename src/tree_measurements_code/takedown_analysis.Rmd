@@ -1,0 +1,965 @@
+---
+title: "prop_adair"
+author: "Anonymous"
+date: "3/11/2022"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r package import}
+library(tidyverse)
+library(readxl)
+library(lme4)
+library(lmerTest)
+library(emmeans)
+library(factoextra)
+library(GGally)
+library(plotly)
+library(multcomp)
+library(multcompView)
+
+```
+
+```{r raw data import, echo = FALSE}
+picos_roots <- read_excel('../PROP_PICOS/root_crown_data/prop_picos_root_measurement.xlsx', na = 'NA')
+picos_takedown <- read_excel('../PROP_PICOS/takedown_measurements/prop_picos_takedown_measurements.xlsx', na = 'NA')
+picos_crown <- read_excel('../PROP_PICOS/root_crown_data/prop_picos_root_system_measurement.xlsx', na = 'NA')
+picos_lai <- read_excel('../PROP_PICOS/lai/prop_picos_lai.xlsx', na = 'NA')
+
+adair_roots <- read_excel('../PROP_ADAIR/root_crown_data/prop_adair_root_measurement.xlsx', na = 'NA')
+adair_takedown <- read_excel('../PROP_ADAIR/growth_data/prop_adair_takedown_20211102.xlsx', na = 'NA')
+adair_crown <- read_excel('../PROP_ADAIR/root_crown_data/prop_adair_root_system_measurement.xlsx', na = 'NA')
+adair_lai <- read_excel('../PROP_ADAIR/lai/prop_adair_lai.xlsx', na = 'NA')
+```
+
+## Data Cleaning
+
+Our measurements on individual roots for each root system need to be cleaned. There are a few things that can be taken care of with simple string search and replace, and some that require the use of regular expressions. Let's clean up the data for the PROP_PICOS trial first.
+
+```{r PROP_PICOS data cleaning}
+#clean up n_branch_seg column inconsistencies
+picos_roots$n_branch_seg <- str_remove_all(picos_roots$n_branch_seg, ' ')
+
+# replace inconsistencies in 'all<' in n_branch_seg
+picos_roots$n_branch_seg <- str_replace(picos_roots$n_branch_seg, '\\(<', '\\(all<')
+
+# pad tree and row values with zeros
+picos_roots <- picos_roots %>% 
+        mutate(extra = sys_id) %>% 
+        separate(extra, into = c('row', 'tree')) %>% 
+        mutate(row = str_pad(row, width = 2, side = 'left', pad = '0')) %>% 
+        mutate(tree = str_pad(tree, width = 2, side = 'left', pad = '0')) %>% 
+        mutate(n_branch = as.numeric(as.vector(str_match(picos_roots$n_branch_seg, pattern = '^(\\d+)\\(*')[,2])), # Extract the number of branches greater than, less than 5mm, and total branches
+               branch_sub5mm = as.vector(str_match(picos_roots$n_branch_seg, "(\\d+)<")[,2]),
+               all_branch_sub5mm = as.vector(str_match(picos_roots$n_branch_seg, 'all')))
+
+# Create new variables for branch data
+picos_roots$n_br_lt5mm <- as.numeric(ifelse(is.na(picos_roots$all_branch_sub5mm) == TRUE, picos_roots$branch_sub5mm, picos_roots$n_branch))
+
+picos_roots <- picos_roots %>% 
+        mutate(n_br_gt5mm = n_branch - n_br_lt5mm) %>% 
+        dplyr::select(-c(branch_sub5mm, all_branch_sub5mm)) %>% 
+        mutate(n_br_lt5mm = ifelse(picos_roots$branched==0, 0, picos_roots$n_br_lt5mm))
+
+picos_roots$n_br_lt5mm <- ifelse(picos_roots$branched == 1 & is.na(picos_roots$n_br_lt5mm), 0, picos_roots$n_br_lt5mm)
+picos_roots$n_br_gt5mm <- ifelse(picos_roots$branched == 1, picos_roots$n_branch - picos_roots$n_br_lt5mm, 0)
+
+#Clean up the segment id column
+picos_roots$seg_id_orig <- picos_roots$seg_id
+picos_roots$seg_id <- str_extract(picos_roots$seg_id_orig, '\\d')
+
+subseg <- str_extract(picos_roots$seg_id_orig, '[a-z]')
+picos_roots$subseg_id <- ifelse(is.na(subseg), 'main', subseg)
+
+#column order 
+picos_takedown$row <- str_pad(as.character(picos_takedown$row),width = 2, side = 'left', pad = '0')
+picos_takedown$tree <- str_pad(as.character(picos_takedown$tree), width = 2, side = 'left', pad = '0')
+
+picos_roots <- picos_roots %>% 
+        left_join(dplyr::select(picos_takedown, row, tree, rs, method), by = c('row','tree'))%>% 
+        dplyr::select(sys_id, row, tree, rs, method, seg_id, subseg_id, n_branch, n_br_lt5mm, n_br_gt5mm, everything()) %>% 
+        dplyr::select(-c(n_branch_seg, seg_id_orig))
+
+picos_lai$row <- as.character(picos_lai$row)
+
+picos_roots$tree <- str_pad(picos_roots$tree, width = 2, 'left', pad = '0')
+
+
+```
+
+Next, we can clean up the data from the PROP_ADAIR field trial. The layout of the data is almost the same so we can use the same code with a few modifications.
+
+```{r PROP_ADAIR data cleaning}
+#clean up n_branch_seg column inconsistencies
+adair_roots$n_branch_seg <- str_remove_all(adair_roots$n_branch_seg, ' ')
+
+# replace inconsistencies in 'all<' in n_branch_seg
+adair_roots$n_branch_seg <- str_replace(adair_roots$n_branch_seg, '\\(<', '\\(all<')
+
+# pad tree and row values with zeros
+adair_roots <- adair_roots %>% 
+        mutate(extra = sys_id) %>% 
+        separate(extra, into = c('row', 'tree')) %>% 
+        mutate(row = str_pad(row, width = 2, side = 'left', pad = '0')) %>% 
+        mutate(tree = str_pad(tree, width = 2, side = 'left', pad = '0')) %>% 
+        mutate(n_branch = as.numeric(as.vector(str_match(adair_roots$n_branch_seg, pattern = '^(\\d+)\\(*')[,2])), # Extract the number of branches greater than, less than 5mm, and total branches
+               branch_sub5mm = as.vector(str_match(adair_roots$n_branch_seg, "(\\d+)<")[,2]),
+               all_branch_sub5mm = as.vector(str_match(adair_roots$n_branch_seg, 'all')))
+
+# Create new variables for branch data
+adair_roots$n_br_lt5mm <- as.numeric(ifelse(is.na(adair_roots$all_branch_sub5mm) == TRUE, adair_roots$branch_sub5mm, adair_roots$n_branch))
+
+adair_roots <- adair_roots %>% 
+        mutate(n_br_gt5mm = n_branch - n_br_lt5mm) %>% 
+        dplyr::select(-c(branch_sub5mm, all_branch_sub5mm)) %>% 
+        mutate(n_br_lt5mm = ifelse(adair_roots$branched==0, 0, adair_roots$n_br_lt5mm))
+
+adair_roots$n_br_lt5mm <- ifelse(adair_roots$branched == 1 & is.na(adair_roots$n_br_lt5mm), 0, adair_roots$n_br_lt5mm)
+adair_roots$n_br_gt5mm <- ifelse(adair_roots$branched == 1, adair_roots$n_branch - adair_roots$n_br_lt5mm, 0)
+
+#Clean up the segment id column
+adair_roots$seg_id_orig <- adair_roots$seg_id
+adair_roots$seg_id <- str_extract(adair_roots$seg_id_orig, '\\d')
+
+subseg <- str_extract(adair_roots$seg_id_orig, '[a-z]')
+adair_roots$subseg_id <- ifelse(is.na(subseg), 'main', subseg)
+
+# Clean up the row and tree id column (sys_id)
+adair_roots$sys_id_2 <- adair_roots$sys_id
+adair_roots$sys_id <- str_replace_all(toupper(adair_roots$sys_id), c(W = '_W', E = '_E'))
+adair_roots <- adair_roots %>% 
+        separate(sys_id, into = c('tree', 'row'), sep = "_") %>% 
+        mutate(row = paste("17", row, sep = '')) %>% 
+        rename(sys_id = sys_id_2)
+
+
+#column order 
+adair_takedown$row <- str_pad(as.character(adair_takedown$row),width = 2, side = 'left', pad = '0')
+adair_takedown$tree <- str_pad(as.character(adair_takedown$tree), width = 2, side = 'left', pad = '0')
+
+
+
+adair_roots <- adair_roots %>% 
+        left_join(dplyr::select(adair_takedown, row, tree, rs, method), by = c('row','tree'))%>% 
+        dplyr::select(sys_id, row, tree, rs, method, seg_id, subseg_id, n_branch, n_br_lt5mm, n_br_gt5mm, everything()) %>% 
+        dplyr::select(-c(n_branch_seg, seg_id_orig))
+
+adair_lai$row <- as.character(adair_lai$row)
+
+adair_roots$tree <- str_pad(adair_roots$tree, width = 2, 'left', pad = '0')
+
+
+```
+
+## Data Explanation
+
+Looking at the data tables and fields for either the `adair_roots` or `picos_roots` we can see that they both have the same columns. First, we have a system_id aliased as `sys_id`. This specifies to which whole root crown or root system the individual root belongs to. Then we have both row and tree columns designating the row and tree in the field trial. `rs` and `method` specify the rootstock variety and propagation method, respectively.
+
+-   `seg_id` and `subseg_id` are taken to be the individual main root segments branching from the main rooting structure, whether or not that structure is a taproot or a cluster of vertical roots growing together. For instance a `seg_id` of `2` and a `subseg_id` of `main` means that the observation is the second root arising off of the main root structure (ordinal, generally) and that the observation is the main root segment, whereas a `seg_id` of `3` and a `subseg_id` of `b` means that the observation is the $b^{th}$ (second) root subsegment arising off of the 3rd root arising off of the main root structure.
+
+-   `n_branch` and its subterms `n_branch_lt5mm` and `n_branch_gt5mm` represent the total number of branching roots coming off of an individual root segment, lt5mm are the branches less than 5mm in diameter, and gt5mm are the number of branches greater than 5mm in diameter.
+
+-   `seg_depth_cm` is the depth at which the main root segment first branches from the main root structure. This could either be a point at which a root branches off laterally from a taproot, or the depth at which a root branches off from another cluster of roots but is still growing down vertically with other large root segments in the root structure (this pattern is common with the "claw" type root systems like `ct` and `mpg`)
+
+-   `em_depth_cm` is the depth at which the main root segment makes a break from the main root structure. This measurement was made when the root could be distinguished as moving away from the main root structure, either as the a lateral break from the root structure or a vertical or rootbound break away from the main root structure. This is constrained to be equal to or greater than the `seg_depth_cm`.
+
+-   `seg_angle` is the angle in degrees at which the root segment emerges from the main root structure at the `em_depth_cm`. This is just the angle at which it emerges, it doesn't mean that the root segment continues in this direction.
+
+-   `seg_b_dia` and `seg_d_dia` are the base and distal diameters of the root segment in mm. The base diameter was measured as close to the branching point as possible. The distal diameter was measured 10cm away from the branching point as measured curvilinearly.
+
+-   `lateral_e` and `vertical_e` are binary variables that describe the general direction of emergence of the root segment from the main root structure. If the root segment emerges out laterally, then the root segment was scored as `1` for `lateral_e`, `0` otherwise. `vertical_e` should always be the opposite score of `lateral_e`.
+
+-   `straight` and `curved` are two more categorical variables. Root segments are scored a `1` if any portion of the root segment is generally straight or curved. They are not mutually exclusive of each other.
+
+-   `root_bound` is a binary variable scoring whether or not a root segment terminates or contains a rootbound section
+
+-   `knotted` is a binary variable that scores whether or not a root segment is knotted or bent with an acute angle back to itself at any point along its length
+
+-   `broken` is binary variable that captures whether or not a root segment broke either completely or partially along its length.
+
+-   `branched` is a binary variable that captures whether or not a root segment has any branches greater than or equal to 5mm in diameter at any point along its extant length.
+
+If any of the variables above have an NA listed, then it means that the data could not be captured accurately. For instance, if the seg_b\_dia is 14.2 and the seg_d\_dia is `NA`, then that means that either the root terminated before 10cm of curvilinear distance, the root broke off before that point, or the root was behind/occluded from measurement by other roots. In general most of the measurements were able to be taken on all of the root segments.
+
+At this point we will need to make summaries of all the data for each of the root systems. This includes summing the total number of root observations for each row, the total number of roots in each binary category, finding the average segment depths, average emergence depth, average segment angle, etc. We will find these summaries for each dataset and model the data.
+
+```{r picos root data summaries}
+# take our raw data, group it by row,tree,rs,and method, and aggregate to the neccessary summaries, either sum or mean.
+p_summary <- picos_roots %>% 
+        group_by(row, tree, rs, method) %>% 
+        summarize(n_seg = n(),
+                  main_seg = sum(ifelse(subseg_id == 'main', 1, 0)),
+                  mean_seg_depth = mean(seg_depth_cm, na.rm = TRUE),
+                  mean_em_depth = mean(em_depth_cm, na.rm = TRUE),
+                  seg_sd = sd(seg_angle, na.rm = TRUE),
+                  seg_angle = mean(seg_angle, na.rm = TRUE),
+                  b_dia = mean(seg_b_dia, na.rm = TRUE),
+                  d_dia = mean(seg_d_dia, na.rm = TRUE),
+                  lateral = sum(lateral_e, na.rm = TRUE),
+                  vertical = sum(vertical_e, na.rm = TRUE),
+                  straight = sum(straight, na.rm = TRUE),
+                  curved = sum(curved, na.rm = TRUE), 
+                  root_bound = sum(root_bound, na.rm =TRUE),
+                  knotted = sum(knotted, na.rm = TRUE),
+                  broken = sum(broken, na.rm = TRUE),
+                  branched = sum(branched, na.rm = TRUE),
+                  pr_lateral = lateral/n_seg,
+                  pr_vertical = vertical/n_seg,
+                  pr_straight = straight/n_seg,
+                  pr_curved = curved/n_seg,
+                  pr_root_bound = root_bound/n_seg,
+                  pr_knotted = knotted/n_seg,
+                  pr_broken = broken/n_seg,
+                  pr_branched = branched/n_seg
+        ) %>%
+        ungroup() %>% 
+        left_join(picos_crown, by = c('row', 'tree')) %>% 
+        left_join(picos_takedown, by = c('row', 'tree', 'rs', 'method')) %>% 
+        left_join(dplyr::select(picos_lai, row, tree, LAI), by = c('row', 'tree')) %>% 
+        rowwise() %>% 
+        mutate(can_vol = height_cm/100*can_1_cm/100*can_2_cm/100/4,
+               thickness = mean(c(thickness_1, thickness_2), na.rm = TRUE),
+               color = mean(c(color_1, color_2), na.rm = TRUE),
+               di = mean(c(di_1, di_2), na.rm = TRUE),
+               density = mean(c(sd_1, sd_2, sd_3, sd_4), na.rm = TRUE),
+               rs_sc_ratio = rs_cm / sc_cm,
+               pb_lat_ratio = root_bound/lateral) %>% 
+        dplyr::select(-c(thickness_1, thickness_2, color_1, color_2, di_1, di_2, height_cm, 
+                  can_1_cm, can_2_cm, sd_1, sd_2, sd_3, sd_4)) %>% 
+        dplyr::select(sys_id, row, tree, plot, direction, rs, method, everything()) %>% 
+        dplyr::select(-comment) %>% 
+        mutate(stump_dia_mm = mean(c(stump_dia_1_mm, stump_dia_2_mm)))
+
+p_summary <- p_summary %>% 
+        mutate(rs = factor(rs),
+               method = factor(method), 
+               block = factor(block))
+
+
+
+pca1 <- prcomp(scale(p_summary[complete.cases(p_summary),c(8:35)]))
+fviz_pca_ind(pca1, habillage = p_summary$rs[complete.cases(p_summary)], addEllipses = TRUE, geom.ind = 'point', ellipse.level = .8)+
+        scale_color_viridis_d(option = 'D', begin = .2, end = .8)+
+        scale_fill_viridis_d(option = 'D', begin = .2, end = .8)+
+        labs(title = 'PROP_PICOS PCA plot\nRootstock Groups')+
+        theme_gray()
+
+fviz_pca_ind(pca1, habillage = p_summary$method[complete.cases(p_summary)], addEllipses = TRUE, geom.ind = 'point', ellipse.level = .8)+
+        scale_color_viridis_d(option = 'D', begin = .2, end = .8)+
+        scale_fill_viridis_d(option = 'D', begin = .2, end = .8)+
+        labs(title = 'PROP_PICOS PCA plot\nPropagation Method Groups')+
+        theme_gray()
+```
+
+```{r}
+a_summary <- adair_roots %>% 
+        group_by(row, tree, rs, method) %>% 
+        summarize(n_seg = n(),
+                  main_seg = sum(ifelse(subseg_id == 'main', 1, 0)),
+                  mean_seg_depth = mean(seg_depth_cm, na.rm = TRUE),
+                  mean_em_depth = mean(em_depth_cm, na.rm = TRUE),
+                  seg_sd = sd(seg_angle, na.rm = TRUE),
+                  seg_angle = mean(seg_angle, na.rm = TRUE),
+                  b_dia = mean(seg_b_dia, na.rm = TRUE),
+                  d_dia = mean(seg_d_dia, na.rm = TRUE),
+                  lateral = sum(lateral_e, na.rm = TRUE),
+                  vertical = sum(vertical_e, na.rm = TRUE),
+                  straight = sum(straight, na.rm = TRUE),
+                  curved = sum(curved, na.rm = TRUE), 
+                  root_bound = sum(root_bound, na.rm =TRUE),
+                  knotted = sum(knotted, na.rm = TRUE),
+                  broken = sum(broken, na.rm = TRUE),
+                  branched = sum(branched, na.rm = TRUE),
+                  pr_lateral = lateral/n_seg,
+                  pr_vertical = vertical/n_seg,
+                  pr_straight = straight/n_seg,
+                  pr_curved = curved/n_seg,
+                  pr_root_bound = root_bound/n_seg,
+                  pr_knotted = knotted/n_seg,
+                  pr_broken = broken/n_seg,
+                  pr_branched = branched/n_seg
+        ) %>%
+        ungroup() %>% 
+        left_join(adair_crown, by = c('row', 'tree')) %>% 
+        left_join(adair_takedown, by = c('row', 'tree', 'rs', 'method')) %>% 
+        left_join(dplyr::select(adair_lai, row, tree, LAI), by = c('row', 'tree')) %>% 
+        rowwise() %>% 
+        mutate(can_vol = height_cm/100*can_1_cm/100*can_2_cm/100/4,
+               thickness = mean(c(thickness_1, thickness_2), na.rm = TRUE),
+               color = mean(c(color_1, color_2), na.rm = TRUE),
+               di = mean(c(di_1, di_2), na.rm = TRUE),
+               density = mean(c(sd_1, sd_2, sd_3, sd_4), na.rm = TRUE),
+               rs_sc_ratio = rs_cm / sc_cm,
+               pb_lat_ratio = root_bound/lateral) %>% 
+        dplyr::select(-c(thickness_1, thickness_2, color_1, color_2, di_1, di_2, height_cm, 
+                  can_1_cm, can_2_cm, sd_1, sd_2, sd_3, sd_4)) %>% 
+        dplyr::select(sys_id, row, tree, plot, direction, rs, method, everything()) %>% 
+        dplyr::select(-comment) %>% 
+        mutate(stump_dia_mm = mean(c(stump_dia_1_mm, stump_dia_2_mm)))
+
+
+a_summary <- a_summary %>% 
+        mutate(rs = factor(rs),
+               method = factor(method), 
+               block = factor(block))
+
+pca2 <- prcomp(scale(a_summary[complete.cases(a_summary),c(8:35)]))
+fviz_pca_ind(pca2, habillage = a_summary$rs[complete.cases(a_summary)], addEllipses = TRUE, geom.ind = 'point', ellipse.level = .8)+
+        scale_color_viridis_d(option = 'D', begin = .2, end = .8)+
+        scale_fill_viridis_d(option = 'D', begin = .2, end = .8)+
+        labs(title = 'PROP_ADAIR PCA plot\nRootstock Groups')+
+        theme_gray()
+
+fviz_pca_ind(pca2, habillage = a_summary$method[complete.cases(a_summary)], addEllipses = TRUE, geom.ind = 'point', ellipse.level = .8)+
+        scale_color_viridis_d(option = 'D', begin = .2, end = .8)+
+        scale_fill_viridis_d(option = 'D', begin = .2, end = .8)+
+        labs(title = 'PROP_ADAIR PCA plot\nPropagation Method Groups')+
+        theme_gray()
+```
+
+Our general explanatory modeling framework will be as follows:
+
+1.  For count data such as the number of broken roots, number of rootbound roots, etc., we will use a poisson generalized linear model with an offset of the total number of root segments. If the goodness of fit assessment after building the model is poor, we will switch to a different modeling framework.
+
+2.  For normally distributed data such as crown_depth_cm and stump_depth_cm we will used linear mixed models with block as a random factor and rootstock, method, and rootstock x method as fixed effects.
+
+3.  Appropriate *post-hoc* tests will be performed as necessary.
+
+```{r picos root modeling}
+glmp1 <- glm(lateral ~ rs*method + offset(log(n_seg)), data = p_summary, family = 'poisson')
+glmp2 <- glm(vertical ~ rs*method + offset(log(n_seg)), data = p_summary, family = 'poisson')
+glmp3 <- glm(straight ~ rs*method + offset(log(n_seg)), data = p_summary, family = 'poisson')
+glmp4 <- glm(curved ~ rs*method + offset(log(n_seg)), data = p_summary, family = 'poisson')
+glmp5 <- glm(root_bound ~ rs*method + offset(log(n_seg)), data = p_summary, family = 'poisson')
+glmp6 <- glm(knotted ~ rs*method + offset(log(n_seg)), data = p_summary, family = 'poisson')
+glmp7 <- glm(broken ~ rs*method + offset(log(n_seg)), data = p_summary, family = 'poisson')
+glmp8 <- glm(branched ~ rs*method + offset(log(n_seg)), data = p_summary, family = 'poisson')
+glmp9 <- glm(main_seg ~ rs*method + offset(log(n_seg)), data = p_summary, family = 'poisson')
+glmp10 <- glm(n_seg ~ rs*method, data = p_summary, family = 'poisson')
+
+
+gof_glm <- function(model){
+        pchisq(model$deviance, model$df.residual, lower.tail = FALSE)
+}
+
+gof_vec <- c()
+model_obj <- list(glmp1, glmp2, glmp3, glmp4, glmp5, glmp6, glmp7, glmp8, glmp9, glmp10)
+for(model in model_obj){
+        gof_vec <- c(gof_vec, gof_glm(model))
+}
+
+names(gof_vec) <- c('lateral', 'vertical', 'straight', 'curved', 'root_bound', 'knotted', 'broken', 'branched', 'main_seg', 'n_seg')
+
+print(gof_vec)
+
+```
+
+The models for the `lateral`, `vertical`, and `branched` dependent variables had good fits (p-values above 0.05, retain the null hypothesis that the model structure explains the dependent variable) while the models for `straight`, `curved`, `root_bound`, and `knotted` did not have good fits. Lets check for overdispersion in these 4 models as this could be an issue.
+
+```{r}
+overdispersion <- function(model){
+        sum(residuals(model,type ="pearson")^2)/model$df.residual
+}
+disp_vec <- c()
+
+for(model in model_obj){
+        dp <- overdispersion(model)
+        disp_vec <- c(disp_vec, dp)
+}
+
+disp_vec
+
+results_mat <- rbind(gof_vec, disp_vec)
+rownames(results_mat) <- c("GOF", "PHI")
+
+results_mat
+
+```
+
+All of the models that did not have a good fit also have dispersion parameter estimates over 1 indicating that the model suffers from overdispersion. We should use a quasi-poisson model to fit a dispersed model to correct for this.
+
+```{r}
+glmp3_o <- glm(straight ~ rs*method + offset(log(n_seg)), data = p_summary, family = 'quasipoisson')
+glmp4_o <- glm(curved ~ rs*method + offset(log(n_seg)), data = p_summary, family = 'quasipoisson')
+glmp5_o <- glm(root_bound ~ rs*method + offset(log(n_seg)), data = p_summary, family = 'quasipoisson')
+glmp6_o <- glm(knotted ~ rs*method + offset(log(n_seg)), data = p_summary, family = 'quasipoisson')
+glmp10_o <- glm(n_seg ~ rs*method, data = p_summary, family = 'quasipoisson')
+
+model_list <- list(glmp3_o, glmp4_o, glmp5_o, glmp6_o, glmp10_o)
+
+overdispersion(glmp4_o)
+gof_glm(glmp4_o)
+
+```
+
+The modeling is complete, so now we can take a look at the anova results for the analysis. 
+
+```{r}
+final_mod_list <- list(glmp1, glmp2, glmp3_o, glmp4_o, glmp5_o, glmp6_o, glmp7, glmp8, glmp9, glmp10_o)
+
+aov_p <- c()
+anova_aggregate <- function(model){
+        anova(model, test = "Chisq")
+}
+
+for(model in final_mod_list){
+        aov_p <- rbind(aov_p, anova_aggregate(model)$`Pr(>Chi)`)
+}
+
+rownames(aov_p) <- c('lateral', 'vertical', 'straight', 'curved', 'root bound', 'knotted', 'broken', 'branched', 'main_seg', 'n_seg')
+colnames(aov_p) <- c('NULL', 'rs', 'method', 'rs:method')
+
+aov_p <- t(aov_p)[-1,]
+aov_p
+
+```
+
+Now lets draw out the estimated marginal means for each of the models and any *post-hoc* separations if applicable.
+
+```{r}
+model_names <- c('lateral', 'vertical', 'straight', 'curved', 'root bound', 'knotted', 'broken', 'branched', 'main_seg', 'n_seg')
+rs_names <- levels(p_summary$rs)
+method_names <- levels(p_summary$method)
+int_names <- as.data.frame(emmeans(glmp1, ~rs:method))
+
+#estimated marginal means
+
+# CHANGE THIS CODE TO WRAP IN ALL POSTHOC TESTS TOO
+rs_means <- c()
+method_means <- c()
+int_means <- c()
+for(model in final_mod_list){
+        #rs_df <- as.data.frame(emmeans(model, ~ rs))
+        #rs_means <- rbind(rs_means, exp(rs_df$emmean))
+        
+        #method_df <- as.data.frame(emmeans(model, ~method))
+        #method_means <- rbind(method_means, exp(method_df$emmean))
+        
+        #int_df <- as.data.frame(emmeans(model, ~rs:method))
+        #int_means <- rbind(int_means, exp(int_df$emmean))
+        
+        rs_df <- as.data.frame(emmeans(model, ~rs, type = "response", offset=0))
+        print(rs_df)
+        rs_means <- rbind(rs_means, rs_df$rate)
+        
+        method_df <- as.data.frame(emmeans(model, ~method, type='response', offset=0))
+        method_means <- rbind(method_means, method_df$rate)
+        
+        int_df <- as.data.frame(emmeans(model, ~rs:method, type='response', offset=0))
+        int_means <- rbind(int_means, int_df$rate)
+        
+        
+}
+
+rownames(rs_means) <- model_names
+colnames(rs_means) <- rs_names
+
+rownames(method_means) <- model_names
+colnames(method_means) <- method_names
+
+rownames(int_means) <- model_names
+colnames(int_means) <- paste(int_df$rs, int_df$method, sep = ':')
+
+rs_means <- t(rs_means)
+method_means <- t(method_means)
+int_means <- t(int_means)
+
+rs_means
+```
+
+And now we can get the *post-hoc* separations for each of the models
+
+```{r}
+rs_means_df <- data.frame(rs = rs_names)
+method_means_df <- data.frame(method = method_names)
+int_means_df <- data.frame(rs = rep(rs_names, each = 3), method = rep(method_names, times = 4))
+
+for(model in final_mod_list){
+        rs_df <- as.data.frame(cld(emmeans(model, ~ rs, type="response", offset=0), Letters = letters, reversed = TRUE)) %>% 
+                dplyr::select(rs, rate, .group) %>% 
+                mutate(rate = paste(round(rate, 2), str_trim(.group), sep = " ")) %>% 
+                dplyr::select(rs, rate)
+        
+        rs_means_df <- rs_means_df %>% 
+                left_join(rs_df, by = 'rs')
+        
+        method_df <- as.data.frame(cld(emmeans(model, ~ method, type="response", offset=0), Letters = letters, reversed = TRUE)) %>% 
+                dplyr::select(method, rate, .group) %>% 
+                mutate(rate = paste(round(rate, 2), str_trim(.group), sep = " ")) %>% 
+                dplyr::select(method, rate)
+        
+        method_means_df <- method_means_df %>% 
+                left_join(method_df, by = 'method')
+        
+        int_df <- as.data.frame(cld(emmeans(model, ~ rs:method, type="response", offset=0), Letters = letters, reversed = TRUE)) %>% 
+                dplyr::select(rs, method, rate, .group) %>% 
+                mutate(rate = paste(round(rate, 2), str_trim(.group), sep = " ")) %>% 
+                dplyr::select(rs, method, rate)
+        
+        int_means_df <- int_means_df %>% 
+                left_join(int_df, by = c('rs', 'method'))
+        
+}
+
+colnames(rs_means_df)[2:ncol(rs_means_df)] <- model_names
+colnames(method_means_df)[2:ncol(method_means_df)] <- model_names
+colnames(int_means_df)[3:ncol(int_means_df)] <- model_names
+
+write.csv(aov_p, 'picos_counts_anova.csv')
+write.csv(rs_means_df, 'picos_counts_rs.csv')
+write.csv(method_means_df, 'picos_counts_method.csv')
+write.csv(int_means_df, 'picos_counts_int.csv')
+```
+
+```{r}
+picos_count_results <- rbind(round(rs_means,3), aov_p[1,], round(method_means,3), aov_p[2,], round(int_means,3), aov_p[3,])
+picos_count_ph <- rbind(rs_ph, method_ph)
+
+write.csv(picos_count_results, 'picos_count_results.csv')
+write.csv(picos_count_ph, 'picos_count_ph.csv')
+```
+
+
+```{r ADAIR Model creation}
+glma1 <- glm(lateral ~ rs*method + offset(log(n_seg)), data = a_summary, family = 'poisson')
+glma2 <- glm(vertical ~ rs*method + offset(log(n_seg)), data = a_summary, family = 'poisson')
+glma3 <- glm(straight ~ rs*method + offset(log(n_seg)), data = a_summary, family = 'poisson')
+glma4 <- glm(curved ~ rs*method + offset(log(n_seg)), data = a_summary, family = 'poisson')
+glma5 <- glm(root_bound ~ rs*method + offset(log(n_seg)), data = a_summary, family = 'poisson')
+glma6 <- glm(knotted ~ rs*method + offset(log(n_seg)), data = a_summary, family = 'poisson')
+glma7 <- glm(broken ~ rs*method + offset(log(n_seg)), data = a_summary, family = 'poisson')
+glma8 <- glm(branched ~ rs*method + offset(log(n_seg)), data = a_summary, family = 'poisson')
+glma9 <- glm(main_seg ~ rs*method + offset(log(n_seg)), data = a_summary, family = 'poisson')
+glma10 <- glm(n_seg ~ rs*method, data = a_summary, family = 'poisson')
+
+
+gof_glm <- function(model){
+        pchisq(model$deviance, model$df.residual, lower.tail = FALSE)
+}
+
+gof_vec <- c()
+model_obj <- list(glma1, glma2, glma3, glma4, glma5, glma6, glma7, glma8, glma9, glma10)
+for(model in model_obj){
+        gof_vec <- c(gof_vec, gof_glm(model))
+}
+
+names(gof_vec) <- c('lateral', 'vertical', 'straight', 'curved', 'root_bound', 'knotted', 'broken', 'branched', 'main_seg', 'n_seg')
+
+print(gof_vec)
+```
+
+The models for `straight`, `curved`, `root_bound`, and `broken` do not have a good fit. We'll need to check for overdispersion in the models.
+
+```{r ADAIR Overdispersion}
+disp_vec <- c()
+
+for(model in model_obj){
+        dp <- overdispersion(model)
+        disp_vec <- c(disp_vec, dp)
+}
+
+disp_vec
+
+results_mat <- rbind(gof_vec, disp_vec)
+rownames(results_mat) <- c("GOF", "PHI")
+
+results_mat
+```
+
+As suspected, the models with poor fits suffer from overdispersion. Let's fit some quasi-poisson models to compensate for this.
+
+
+```{r}
+glma3_o <- glm(straight ~ rs*method + offset(log(n_seg)), data = a_summary, family = 'quasipoisson')
+glma4_o <- glm(curved ~ rs*method + offset(log(n_seg)), data = a_summary, family = 'quasipoisson')
+glma5_o <- glm(root_bound ~ rs*method + offset(log(n_seg)), data = a_summary, family = 'quasipoisson')
+glma7_o <- glm(knotted ~ rs*method + offset(log(n_seg)), data = a_summary, family = 'quasipoisson')
+glma10_o <- glm(n_seg ~ rs*method, data = a_summary, family='quasipoisson')
+```
+Let's make a list of the final models and then perform ANOVA Chisquared tests
+
+```{r}
+final_mod_list <- list(glma1, glma2, glma3_o, glma4_o, glma5_o, glma6, glma7_o, glma8, glma9, glma10_o)
+
+aov_p <- c()
+anova_aggregate <- function(model){
+        anova(model, test = "Chisq")
+}
+
+for(model in final_mod_list){
+        aov_p <- rbind(aov_p, anova_aggregate(model)$`Pr(>Chi)`)
+}
+
+rownames(aov_p) <- c('lateral', 'vertical', 'straight', 'curved', 'root bound', 'knotted', 'broken', 'branched', 'main_seg', 'n_seg')
+colnames(aov_p) <- c('NULL', 'rs', 'method', 'rs:method')
+
+aov_p <- t(aov_p)[-1,]
+aov_p
+```
+
+
+```{r}
+rs_means_df <- data.frame(rs = rs_names)
+method_means_df <- data.frame(method = method_names)
+int_means_df <- data.frame(rs = rep(rs_names, each = 3), method = rep(method_names, times = 4))
+
+for(model in final_mod_list){
+        rs_df <- as.data.frame(cld(emmeans(model, ~ rs, type="response", offset=0), Letters = letters, reversed = TRUE)) %>% 
+                dplyr::select(rs, rate, .group) %>% 
+                mutate(rate = paste(round(rate, 2), str_trim(.group), sep = " ")) %>% 
+                dplyr::select(rs, rate)
+        
+        rs_means_df <- rs_means_df %>% 
+                left_join(rs_df, by = 'rs')
+        
+        method_df <- as.data.frame(cld(emmeans(model, ~ method, type="response", offset=0), Letters = letters, reversed = TRUE)) %>% 
+                dplyr::select(method, rate, .group) %>% 
+                mutate(rate = paste(round(rate, 2), str_trim(.group), sep = " ")) %>% 
+                dplyr::select(method, rate)
+        
+        method_means_df <- method_means_df %>% 
+                left_join(method_df, by = 'method')
+        
+        int_df <- as.data.frame(cld(emmeans(model, ~ rs:method, type="response", offset=0), Letters = letters, reversed = TRUE)) %>% 
+                dplyr::select(rs, method, rate, .group) %>% 
+                mutate(rate = paste(round(rate, 2), str_trim(.group), sep = " ")) %>% 
+                dplyr::select(rs, method, rate)
+        
+        int_means_df <- int_means_df %>% 
+                left_join(int_df, by = c('rs', 'method'))
+        
+}
+
+colnames(rs_means_df)[2:ncol(rs_means_df)] <- model_names
+colnames(method_means_df)[2:ncol(method_means_df)] <- model_names
+colnames(int_means_df)[3:ncol(int_means_df)] <- model_names
+
+write.csv(aov_p, 'adair_counts_anova.csv')
+write.csv(rs_means_df, 'adair_counts_rs.csv')
+write.csv(method_means_df, 'adair_counts_method.csv')
+write.csv(int_means_df, 'adair_counts_int.csv')
+```
+
+Now let's model the continuous variables in the data with linear mixed models
+
+```{r}
+#First the PROP_PICOS data
+mmp1 <- lmer(mean_seg_depth ~ rs*method + (1|block), data = p_summary)
+mmp2 <- lmer(mean_em_depth ~ rs*method + (1|block), data = p_summary)
+mmp3 <- lmer(b_dia ~ rs*method + (1|block), data = p_summary)
+mmp4 <- lmer(d_dia ~ rs*method + (1|block), data = p_summary)
+mmp5 <- lmer(crown_depth_cm ~ rs*method + (1|block), data = p_summary)
+mmp6 <- lmer(stump_depth_cm ~ rs*method + (1|block), data = p_summary)
+mmp7 <- lmer(weight_g ~ rs*method + (1|block), data = p_summary)
+mmp8 <- lmer(stump_dia_mm ~ rs*method + (1|block), data = p_summary)
+
+#Then the PROP_ADAIR data
+mma1 <- lmer(mean_seg_depth ~ rs*method + (1|block), data = a_summary)
+mma2 <- lmer(mean_em_depth ~ rs*method + (1|block), data = a_summary)
+mma3 <- lmer(b_dia ~ rs*method + (1|block), data = a_summary)
+mma4 <- lmer(d_dia ~ rs*method + (1|block), data = a_summary)
+mma5 <- lmer(crown_depth_cm ~ rs*method + (1|block), data = a_summary)
+mma6 <- lmer(stump_depth_cm ~ rs*method + (1|block), data = a_summary)
+mma7 <- lmer(weight_g ~ rs*method + (1|block), data = a_summary)
+mma8 <- lmer(stump_dia_mm ~ rs*method + (1|block), data = a_summary)
+```
+
+Now, we can run ANOVA F-tests for all of the above models and export the estimated marginal means and *post-hoc* separation results. We can start with the PROP_PICOS data.
+
+```{r}
+final_mod_list <- list(mmp1, mmp2, mmp3, mmp4, mmp5, mmp6, mmp7, mmp8)
+model_names <- c('mean_seg_depth_cm', 'mean_em_depth_cm', 'b_dia', 'd_dia', 'crown_depth_cm', 'stump_depth_cm', 'weight_g', 'stump_dia_mm')
+
+aov_p <- c()
+anova_aggregate_mixed <- function(model){
+        anova(model)
+}
+
+for(model in final_mod_list){
+        aov_p <- rbind(aov_p, anova_aggregate_mixed(model)$`Pr(>F)`)
+}
+
+rownames(aov_p) <- c('mean_seg_depth', 'mean_em_depth', 'b_dia', 'd_dia', 'crown_depth_cm', 'stump_depth_cm', 'weight_g', 'stump_dia_mm')
+colnames(aov_p) <- c('rs', 'method', 'rs:method')
+
+aov_p <- t(aov_p)
+aov_p
+
+rs_means_df <- data.frame(rs = rs_names)
+method_means_df <- data.frame(method = method_names)
+int_means_df <- data.frame(rs = rep(rs_names, each = 3), method = rep(method_names, times = 4))
+
+for(model in final_mod_list){
+        rs_df <- as.data.frame(cld(emmeans(model, ~ rs), Letters = letters, reversed = TRUE)) %>% 
+                dplyr::select(rs, emmean, .group) %>% 
+                mutate(mean = paste(round(emmean, 2), str_trim(.group), sep = " ")) %>% 
+                dplyr::select(rs, mean)
+        
+        rs_means_df <- rs_means_df %>% 
+                left_join(rs_df, by = 'rs')
+        
+        method_df <- as.data.frame(cld(emmeans(model, ~ method), Letters = letters, reversed = TRUE)) %>% 
+                dplyr::select(method, emmean, .group) %>% 
+                mutate(mean = paste(round(emmean, 2), str_trim(.group), sep = " ")) %>% 
+                dplyr::select(method, mean)
+        
+        method_means_df <- method_means_df %>% 
+                left_join(method_df, by = 'method')
+        
+        int_df <- as.data.frame(cld(emmeans(model, ~ rs:method), Letters = letters, reversed = TRUE)) %>% 
+                dplyr::select(rs, method, emmean, .group) %>% 
+                mutate(mean = paste(round(emmean, 2), str_trim(.group), sep = " ")) %>% 
+                dplyr::select(rs, method, mean)
+        
+        int_means_df <- int_means_df %>% 
+                left_join(int_df, by = c('rs', 'method'))
+        
+}
+
+colnames(rs_means_df)[2:ncol(rs_means_df)] <- model_names
+colnames(method_means_df)[2:ncol(method_means_df)] <- model_names
+colnames(int_means_df)[3:ncol(int_means_df)] <- model_names
+
+write.csv(aov_p, 'picos_normal_anova.csv')
+write.csv(rs_means_df, 'picos_normal_rs.csv')
+write.csv(method_means_df, 'picos_normal_method.csv')
+write.csv(int_means_df, 'picos_normal_int.csv')
+```
+
+
+And then the PROP_ADAIR data
+```{r}
+final_mod_list <- list(mma1, mma2, mma3, mma4, mma5, mma6, mma7, mma8)
+model_names <- c('mean_seg_depth_cm', 'mean_em_depth_cm', 'b_dia', 'd_dia', 'crown_depth_cm', 'stump_depth_cm', 'weight_g', 'stump_dia_mm')
+
+aov_p <- c()
+anova_aggregate_mixed <- function(model){
+        anova(model)
+}
+
+for(model in final_mod_list){
+        aov_p <- rbind(aov_p, anova_aggregate_mixed(model)$`Pr(>F)`)
+}
+
+rownames(aov_p) <- c('mean_seg_depth', 'mean_em_depth', 'b_dia', 'd_dia', 'crown_depth_cm', 'stump_depth_cm', 'weight_g', 'stump_dia_mm')
+colnames(aov_p) <- c('rs', 'method', 'rs:method')
+
+aov_p <- t(aov_p)
+aov_p
+
+rs_means_df <- data.frame(rs = rs_names)
+method_means_df <- data.frame(method = method_names)
+int_means_df <- data.frame(rs = rep(rs_names, each = 3), method = rep(method_names, times = 4))
+
+for(model in final_mod_list){
+        rs_df <- as.data.frame(cld(emmeans(model, ~ rs), Letters = letters, reversed = TRUE)) %>% 
+                dplyr::select(rs, emmean, .group) %>% 
+                mutate(mean = paste(round(emmean, 2), str_trim(.group), sep = " ")) %>% 
+                dplyr::select(rs, mean)
+        
+        rs_means_df <- rs_means_df %>% 
+                left_join(rs_df, by = 'rs')
+        
+        method_df <- as.data.frame(cld(emmeans(model, ~ method), Letters = letters, reversed = TRUE)) %>% 
+                dplyr::select(method, emmean, .group) %>% 
+                mutate(mean = paste(round(emmean, 2), str_trim(.group), sep = " ")) %>% 
+                dplyr::select(method, mean)
+        
+        method_means_df <- method_means_df %>% 
+                left_join(method_df, by = 'method')
+        
+        int_df <- as.data.frame(cld(emmeans(model, ~ rs:method), Letters = letters, reversed = TRUE)) %>% 
+                dplyr::select(rs, method, emmean, .group) %>% 
+                mutate(mean = paste(round(emmean, 2), str_trim(.group), sep = " ")) %>% 
+                dplyr::select(rs, method, mean)
+        
+        int_means_df <- int_means_df %>% 
+                left_join(int_df, by = c('rs', 'method'))
+        
+}
+
+colnames(rs_means_df)[2:ncol(rs_means_df)] <- model_names
+colnames(method_means_df)[2:ncol(method_means_df)] <- model_names
+colnames(int_means_df)[3:ncol(int_means_df)] <- model_names
+
+write.csv(aov_p, 'adair_normal_anova.csv')
+write.csv(rs_means_df, 'adair_normal_rs.csv')
+write.csv(method_means_df, 'adair_normal_method.csv')
+write.csv(int_means_df, 'adair_normal_int.csv')
+```
+
+
+
+
+
+```{r}
+
+mat <- p_summary[complete.cases(p_summary),c(15:22, 39)]
+cormat <-  round(cor(mat), 2)
+library(reshape2)
+cormat_melt <- melt(cormat)
+
+heatmap <- ggplot(cormat_melt, aes(x = Var1, y = Var2, fill = value))+
+        geom_tile()+
+        scale_fill_viridis_c(option = 'D')+
+        labs(title= "Absolute Root Counts Correlation HeatMap", fill = "Pearson's r")+
+        theme(axis.text.x = element_text(angle = 90, vjust = .2))
+
+ggplotly(heatmap)
+
+
+mat <- p_summary[complete.cases(p_summary),c(23:30, 39)]
+cormat <-  round(cor(mat), 2)
+library(reshape2)
+cormat_melt <- melt(cormat)
+
+heatmap <- ggplot(cormat_melt, aes(x = Var1, y = Var2, fill = value))+
+        geom_tile()+
+        scale_fill_viridis_c(option = 'D')+
+        labs(title= "Root Type Proportions Correlation HeatMap", fill = "Pearson's r")+
+        theme(axis.text.x = element_text(angle = 90, vjust = .2))
+
+ggplotly(heatmap)
+
+
+mat <- p_summary[complete.cases(p_summary),8:44]
+cormat <-  round(cor(mat), 2)
+library(reshape2)
+cormat_melt <- melt(cormat)
+
+
+heatmap <- (ggplot(cormat_melt, aes(x = Var1, y = Var2, fill = value))+
+        geom_tile()+
+        scale_fill_viridis_c(option = 'C')+
+        labs(title= "Root Type Proportions Correlation HeatMap", fill = "Pearson's r")+
+        theme(axis.text.x = element_text(angle = 90, vjust = .2)))
+
+ggplotly(heatmap)
+
+ggplot(p_summary, aes(x = vert_e_depth, y = can_vol, color = rs))+
+        geom_point(size = 3, alpha = .7)+
+        scale_color_viridis_d(option = 'D')
+
+new_mat <- p_summary[complete.cases(p_summary), c(8:10, 15:39)]
+cormat <-  round(cor(new_mat), 2)
+library(reshape2)
+cormat_melt <- melt(cormat)
+
+heatmap <- ggplot(cormat_melt, aes(x = Var1, y = Var2, fill = value))+
+        geom_tile()+
+        scale_fill_viridis_c(option = 'C')+
+        labs(title= "Root Type Proportions Correlation HeatMap", fill = "Pearson's r")+
+        theme(axis.text.x = element_text(angle = 90, vjust = .2))
+```
+
+```{r}
+ggpairs(p_summary[,c(23:36,39)], aes(color = p_summary$method))+
+        scale_color_viridis_d(option = 'D', begin = .2, end = .8)+
+        scale_fill_viridis_d(option = 'D', begin = .2, end = .8)
+
+ggpairs(p_summary[,c(23:27,38:39)], aes(color = p_summary$method))+
+        scale_color_viridis_d(option = 'D', begin = .2, end = .8)+
+        scale_fill_viridis_d(option = 'D', begin = .2, end = .8)
+
+```
+
+```{r}
+ggplot(p_summary, aes(x = rs, y = can_vol, fill = rs))+
+        geom_boxplot()+
+        facet_wrap(~method, labeller = labeller(method = c('ct' = 'Cutting', 'mpg' = 'Tissue Culture', 'sd' = 'Seedling')))+
+        scale_fill_viridis_d(option = 'D', begin = .2, end = .8)+
+        theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1, ))+
+        labs(title = 'Canopy Volume by Propagation Method', fill = 'Rootstock', x = 'Rootstock', y = 'Canopy Volume (m3)')
+
+library(agricolae)
+
+lm1 <- lm(can_vol ~ rs * method, data = p_summary)
+summary(lm1)
+anova(lm1)
+
+(HSD.test(lm1, 'rs'))
+
+lm2 <- lm(pr_root_bound ~ rs*method, p_summary)
+summary(lm2)
+anova(lm2)
+(HSD.test(lm2, 'rs'))
+
+lm3 <- lm(seg_depth ~ rs*method, p_summary)
+summary(lm3)
+anova(lm3)
+(HSD.test(lm3, c('rs', 'method')))
+
+
+lm4 <- lm(can_vol ~ rs*method, data = p_summary)
+summary(lm4)
+anova(lm4)
+
+
+ggplot(p_summary, aes(x = pr_root_bound, y = rs_cm, color = method))+
+        geom_point(size = 4, alpha = .6)+
+        scale_color_viridis_d(option = 'D', begin = .2, end = .8)+
+        labs(title = 'Rootstock Trunk Circumference\nCorrelation with Pot-Bound Root Proportion',
+             x = "Proportion of Pot-bound Roots",
+             y = "Rootstock Circumference (cm)",
+             color = 'Propagation\nMethod')+
+        geom_smooth(aes(x = pr_root_bound, y = rs_cm), color = 'blue',method = 'lm')+
+        facet_wrap(~rs)
+
+ggplot(p_summary, aes(x = pr_lateral, y = rs_cm, color = method))+
+        geom_point(size = 4, alpha = .6)+
+        scale_color_viridis_d(option = 'D', begin = .2, end = .8)+
+        labs(title = 'Rootstock Trunk Circumference\nCorrelation with Lateral Root Proportion',
+             x = "Proportion of Lateral Roots",
+             y = "Rootstock Circumference (cm)",
+             color = 'Propagation\nMethod')+
+        geom_smooth(aes(x = pr_lateral, y = rs_cm), color = 'blue',method = 'lm')+
+        facet_wrap(~rs)
+
+
+ggplot(p_summary, aes(x = root_bound, y = rs_cm, color = method))+
+        geom_point(size = 4, alpha = .6)+
+        scale_color_viridis_d(option = 'D', begin = .2, end = .8)+
+        labs(title = 'Rootstock Trunk Circumference\nCorrelation with Pot-Bound Root Count',
+             x = "Pot-bound Root Count",
+             y = "Rootstock Circumference (cm)",
+             color = 'Propagation\nMethod')+
+        geom_smooth(aes(x = root_bound, y = rs_cm), color = 'blue',method = 'lm')+
+        facet_wrap(~rs)
+
+ggplot(p_summary, aes(x = lateral, y = rs_cm, color = method))+
+        geom_point(size = 4, alpha = .6)+
+        scale_color_viridis_d(option = 'D', begin = .2, end = .8)+
+        labs(title = 'Rootstock Trunk Circumference\nCorrelation with Lateral Root Count',
+             x = "Lateral Root Count",
+             y = "Rootstock Circumference (cm)",
+             color = 'Propagation\nMethod')+
+        geom_smooth(aes(x = lateral, y = rs_cm), color = 'blue',method = 'lm')+
+        facet_wrap(~rs)
+
+ggplot(p_summary, aes(x = n_seg, y = rs_cm, color = method))+
+        geom_point(size = 4, alpha = .6)+
+        scale_color_viridis_d(option = 'D', begin = .2, end = .8)+
+        labs(title = 'Rootstock Trunk Circumference\nCorrelation with Total Root Count',
+             x = "Total Root Count",
+             y = "Rootstock Circumference (cm)",
+             color = 'Propagation\nMethod')+
+        geom_smooth(aes(x = n_seg, y = rs_cm), color = 'blue',method = 'lm')+
+        facet_wrap(~rs)
+
+
+ggplot(p_summary, aes(x = pb_lat_ratio, y = rs_cm, color = method))+
+        geom_point(size = 4, alpha = .6)+
+        scale_color_viridis_d(option = 'D', begin = .2, end = .8)+
+        labs(title = 'Rootstock Trunk Circumference\nCorrelation with Total Root Count',
+             x = "Total Root Count",
+             y = "Rootstock Circumference (cm)",
+             color = 'Propagation\nMethod')+
+        geom_smooth(aes(x = pb_lat_ratio, y = rs_cm), color = 'blue',method = 'lm')+
+        facet_wrap(~rs)
+
+```

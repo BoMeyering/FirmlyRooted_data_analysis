@@ -1,0 +1,120 @@
+---
+title: 'PROP ADAIR: Tree Growth Data Analysis'
+author: "Bo Meyering"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r library import, echo = FALSE}
+library(emmeans)
+library(tidyverse)
+library(lme4)
+library(readxl)
+library(lmer)
+library(multcomp)
+```
+
+
+## Data Import
+```{r data import}
+raw_data <- read_excel("../growth_data/prop_adair_takedown_20211102.xlsx", na = "NA") %>% 
+        select(-comment)
+raw_data <- raw_data[complete.cases(raw_data),]
+raw_data$rs <- as.factor(raw_data$rs)
+raw_data$method <- as.factor(raw_data$method)
+raw_data$block <- as.factor(raw_data$block)
+
+raw_data <- raw_data %>% 
+        rowwise() %>% 
+        mutate(can_vol_m3 = can_1_cm/100 * can_2_cm/100 * height_cm/100 / 4,
+               di = mean(c(di_1, di_2)),
+               thick = mean(c(thickness_1, thickness_2)), 
+               color = mean(c(color_1, color_2)),
+               soil_density_kpa = mean(c(sd_1, sd_2, sd_3, sd_4))) %>% 
+        rename(soil_moisture_vwc = soil_moisture)
+
+attach(raw_data)
+```
+
+
+```{r mixed models}
+mm_height <- lmer(height_cm ~ rs*method + (1|block))
+mm_rscm <- lmer(rs_cm ~ rs*method + (1|block))
+mm_sccm <- lmer(sc_cm ~ rs*method + (1|block))
+mm_canvol <- lmer(can_vol_m3 ~ rs*method + (1|block))
+mm_di <- lmer(di ~ rs*method + (1|block))
+mm_thick <- lmer(thick ~ rs*method + (1|block))
+mm_color <- lmer(color ~ rs*method + (1|block))
+mm_soildensity <- lmer(soil_density_kpa ~ rs*method + (1|block))
+
+pvalue_table <- function(model_vec, num_factors){
+        results <- matrix(NA, nrow = num_factors, ncol = length(model_vec))
+        for(i in 1:length(model_vec)){
+                aov_table <- as.data.frame(anova(model_vec[[i]]))
+                p_values <- aov_table$`Pr(>F)`
+                results[,i] <- p_values
+        }
+        results <- as.data.frame(cbind(rownames(aov_table), results))
+        #results <- results %>% 
+        #        mutate(across(V2:V8), as.numeric)
+        results
+}
+
+
+x <- pvalue_table(c(mm_height, mm_rscm, mm_sccm, mm_canvol, mm_di, mm_thick, mm_color, mm_soildensity), 3)
+```
+
+
+```{r rootstock extraction}
+means_extract <- function(model_name, spec_factor){
+        emm <- emmeans(model_name, spec_factor)
+        emm <- as.data.frame(emm) %>% 
+                rowwise() %>% 
+                mutate(CI = upper.CL - emmean) %>% 
+                select(1, emmean, CI)
+        emm
+}
+
+rs_height <- means_extract(mm_height, spec_factor = "rs")
+rs_rscm <- means_extract(mm_rscm, spec_factor = "rs")
+rs_sccm <- means_extract(mm_sccm, spec_factor = "rs")
+rs_canvol <- means_extract(mm_canvol, spec_factor = "rs")
+rs_di <- means_extract(mm_di, spec_factor = "rs")
+rs_thick <- means_extract(mm_thick, spec_factor = "rs")
+rs_color <- means_extract(mm_color, spec_factor = "rs")
+rs_soildensity <- means_extract(mm_soildensity, spec_factor = "rs")
+
+
+```
+
+
+
+```{r}
+method_height <- means_extract(mm_height, spec_factor = "method")
+method_rscm <- means_extract(mm_rscm, spec_factor = "method")
+method_sccm <- means_extract(mm_sccm, spec_factor = "method")
+method_canvol <- means_extract(mm_canvol, spec_factor = "method")
+method_di <- means_extract(mm_di, spec_factor = "method")
+method_thick <- means_extract(mm_thick, spec_factor = "method")
+method_color <- means_extract(mm_color, spec_factor = "method")
+method_soildensity <- means_extract(mm_soildensity, spec_factor = "method")
+```
+
+
+
+```{r}
+int_height <- means_extract(mm_height, spec_factor = "rs + method")
+int_rscm <- means_extract(mm_rscm, spec_factor = "rs:method")
+int_sccm <- means_extract(mm_sccm, spec_factor = "rs:method")
+int_canvol <- means_extract(mm_canvol, spec_factor = "rs:method")
+int_di <- means_extract(mm_di, spec_factor = "rs:method")
+int_thick <- means_extract(mm_thick, spec_factor = "rs:method")
+int_color <- means_extract(mm_color, spec_factor = "rs:method")
+int_soildensity <- means_extract(mm_soildensity, spec_factor = "rs:method")
+```
+
+
