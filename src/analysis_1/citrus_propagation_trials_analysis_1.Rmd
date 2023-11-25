@@ -1,0 +1,163 @@
+---
+title: "Citrus Propagation Trials - Analysis 1"
+author: "Bo Meyering, Caroline Tardivo, Gabriel Pugina, Ute Albrecht"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r R library import, echo=FALSE, message=FALSE}
+library(tidyverse)
+library(factoextra)
+library(emmeans)
+library(lme4)
+library(lmerTest)
+library(factoextra)
+library(GGally)
+library(plotly)
+library(multcomp)
+library(multcompView)
+library(data.table)
+
+```
+
+```{r data import, echo=FALSE, message=FALSE}
+# Tree growth data
+pa_growth_raw <- fread("../../data/raw/tree_growth/prop_adair_tree_growth_data.csv")
+pp_growth_raw <- fread("../../data/raw/tree_growth/prop_picos_tree_growth_data.csv")
+
+# Root measurement data
+pa_roots_raw <- fread("../../data/raw/root_measurements/prop_adair_root_measurement.csv")
+pp_roots_raw <- fread("../../data/raw/root_measurements/prop_picos_root_measurement.csv")
+
+# Root system measurement data
+pa_systems_raw <- fread("../../data/raw/whole_root_system_measurements/prop_adair_root_system_measurement.csv")
+pp_systems_raw <- fread("../../data/raw/whole_root_system_measurements/prop_picos_root_system_measurement.csv")
+
+# LAI data
+pa_lai_raw <- fread("../../data/processed/lai/prop_adair_processed_lai")
+pp_lai_raw <- fread("../../data/processed/lai/prop_picos_processed_lai")
+
+# Phytophthora data
+pa_phyt_raw <- fread("../../data/raw/phytophthora_analysis/prop_adair_phytophthora_elisa.csv")
+
+# PCR data
+pa_qpcr_raw <- fread("../../data/raw/pcr/prop_adair_pcr_202111.csv")
+pp_qpcr_raw <- fread("../../data/raw/pcr/prop_picos_pcr_202110.csv")
+
+# Nutrient data
+pa_leaf_raw <- fread("../../data/raw/nutrient_analysis/prop_adair_20211102_leaf_nutrient_analysis.csv")
+pa_soil_raw <- fread("../../data/raw/nutrient_analysis/prop_adair_20211102_soil_nutrient_analysis.csv")
+pp_leaf_raw <- fread("../../data/raw/nutrient_analysis/prop_picos_20211019_leaf_nutrient_analysis.csv")
+pp_soil_raw <- fread("../../data/raw/nutrient_analysis/prop_picos_20211019_soil_nutrient_analysis.csv")
+```
+
+```{r prop adair data cleaning}
+pa_trees <- pa_growth_raw %>% 
+        dplyr::select(sys_id:plant_date) %>% 
+        distinct() %>% 
+        dplyr::mutate(plot_id = paste(plot, str_extract(row, "[A-Z]+"), sep="")) %>% 
+        dplyr::select(sys_id, plot_id, everything()) %>% 
+        filter(!is.na(block)) %>% 
+        slice(-27) # remove the row with a replacement tree
+
+pa_plots <- pa_trees %>% 
+        group_by(plot_id, row, plot, block, rs, prop_type) %>% 
+        count() %>% 
+        arrange(row, plot, block)
+
+pa_qpcr <- pa_qpcr_raw %>% 
+        mutate(plot_id = paste(plot, str_extract(row, "[A-Z]+"), sep="")) %>% 
+        left_join(pa_plots, 'plot_id' ) %>% 
+        dplyr::select(plot_id, block, row.x, plot.x, rs, prop_type, hlb_ct, cox_ct) %>% 
+        mutate(mean_cox = mean(cox_ct),
+               hlb_ct_adj = hlb_ct/(cox_ct/mean(cox_ct)))
+
+
+tree_data <- pa_trees %>% 
+        left_join(pa_growth, by=c())
+
+
+```
+
+
+```{r prop picos data cleaning}
+pp_trees <- pp_growth_raw %>% 
+        dplyr::select(sys_id:plant_date) %>% 
+        distinct() %>% 
+        dplyr::mutate(plot_id = paste(row, "P", plot, sep="")) %>% 
+        dplyr::select(sys_id, plot_id, everything()) %>% 
+        filter(!is.na(block))
+
+pp_plots <- pp_trees_raw %>% 
+        group_by(plot_id, row, plot, block, rs, prop_type) %>% 
+        count() %>% 
+        arrange(row, plot, block)
+
+pp_qpcr <- pp_qpcr_raw %>% 
+        mutate(plot_id = paste(row, "P", plot, sep="")) %>% 
+        left_join(pp_plots, 'plot_id' ) %>% 
+        dplyr::select(plot_id, block, row.x, plot.x, rs, prop_type, hlb_ct, cox_ct) %>% 
+        mutate(mean_cox = mean(cox_ct),
+               hlb_ct_adj = hlb_ct/(cox_ct/mean(cox_ct)))
+```
+
+
+## Nutrient Data Analysis
+
+```{r}
+pa_leaf <- pa_leaf_raw %>% 
+        mutate(sys_id = paste(
+                str_pad
+        ))
+
+```
+
+
+## qPCR Clas Confirmation
+
+```{r}
+pa_qpcr_box <- ggplot(pa_qpcr, aes(x = rs, y = hlb_ct_adj, fill=factor(prop_type)))+
+        geom_boxplot()
+
+pa_qpcr_box
+
+mm_pa_pcr <- lmer(hlb_ct_adj ~ rs*prop_type + (1|block), data=pa_qpcr)
+anova(mm_pa_pcr)
+
+pp_qpcr_box <- ggplot(pp_qpcr, aes(x=rs, y=hlb_ct_adj, fill=prop_type))+
+        geom_boxplot()
+pp_qpcr_box
+
+mm_pp_pcr <- lmer(hlb_ct_adj ~ rs*prop_type + (1|block), data=pp_qpcr)
+anova(mm_pp_pcr)
+```
+
+## Tree LAI
+
+```{r}
+pa_lai <- pa_lai_raw %>% 
+        separate(LAI_File, into=c("row", "tree")) %>% 
+        mutate(sys_id = paste(str_pad(tree,2,'left', pad='0'), str_extract(row, '[A-Z]+'), sep="")) %>% 
+        right_join(pa_trees, by='sys_id') %>% 
+        dplyr::select(sys_id, row.x, tree.x, plot, block, rs, prop_type, LAI) %>% 
+        rename(row = row.x, 
+               tree = tree.x)
+
+mm_pa_lai <- lmer(LAI ~ rs*prop_type + (1|block), data=pa_lai)
+anova(mm_pa_lai)
+
+pp_lai <- pp_lai_raw %>% 
+        mutate(sys_id = paste(row, tree, sep='-'))  %>% 
+        right_join(pp_trees, by='sys_id') %>% 
+        dplyr::select(sys_id, row.x, tree.x, plot, block, rs, prop_type, LAI) %>% 
+        rename(row=row.x, 
+               tree=tree.x)
+
+mm_pp_lai <- lmer(LAI ~ rs*prop_type + (1|block), data=pp_lai)
+anova(mm_pp_lai)
+```
+
