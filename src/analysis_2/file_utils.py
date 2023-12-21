@@ -41,7 +41,7 @@ class MergedDF:
         )
 
         merged = pd.merge_asof(force_df, angle_df, left_index=True, right_index=True, direction='nearest')
-
+        merged['ang_y'] = merged['ang_y'].abs()
         self.merged_data = merged
 
         return self.merged_data

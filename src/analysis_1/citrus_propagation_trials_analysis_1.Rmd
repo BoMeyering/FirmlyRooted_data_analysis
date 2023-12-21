@@ -122,7 +122,9 @@ pa_root_data <- pa_roots_raw %>%
                n_branch = as.numeric(as.vector(str_match(n_branch_seg, pattern = '^(\\d+)\\(*')[,2])),
                branch_sub5mm = as.vector(str_match(n_branch_seg, "(\\d+)<")[,2]),
                all_branch_sub5mm = as.vector(str_match(n_branch_seg, 'all')),
-               n_br_lt5mm <- as.numeric(ifelse(is.na(adair_roots$all_branch_sub5mm) == TRUE)), branch_sub5mm, n_branch)
+               branch_sub5mm = ifelse(is.na(branch_sub5mm), 0, branch_sub5mm),
+               n_branch_lt5mm = as.numeric(ifelse(is.na(all_branch_sub5mm), branch_sub5mm, n_branch))) %>% 
+        dplyr::select(-c(branch_sub5mm, all_branch_sub5mm, n_branch_seg))
         
 
 
@@ -204,5 +206,27 @@ pp_lai <- pp_lai_raw %>%
 
 mm_pp_lai <- lmer(LAI ~ rs*prop_type + (1|block), data=pp_lai)
 anova(mm_pp_lai)
+```
+
+## Root Measurements
+```{r}
+pa_root_summary <- pa_root_data %>% 
+        group_by(sys_id) %>% 
+        summarize(seg_depth_cm = mean(seg_depth_cm, na.rm=TRUE),
+                  em_depth_cm = mean(em_depth_cm, na.rm=TRUE),
+                  seg_angle = mean(seg_angle, na.rm=TRUE),
+                  seg_b_dia = mean(seg_b_dia, na.rm=TRUE),
+                  seg_d_dia = mean(seg_d_dia, na.rm=TRUE),
+                  lateral_e = sum(lateral_e, na.rm=TRUE),
+                  vertical_e = sum(vertical_e, na.rm=TRUE),
+                  straight = sum(straight, na.rm=TRUE),
+                  curved = sum(curved, na.rm=TRUE),
+                  root_bound = sum(root_bound, na.rm=TRUE),
+                  knotted = sum(knotted, na.rm=TRUE), 
+                  branched = sum(branched, na.rm=TRUE), 
+                  n_branch = sum(n_branch, na.rm=TRUE),
+                  n_branch_lt5mm = sum(n_branch_lt5mm, na.rm=TRUE))
+
+write.csv(pa_root_summary, file = "../../data/processed/root_measurements/prop_adair_root_measurement_summary.csv")
 ```
 
