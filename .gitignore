@@ -130,3 +130,10 @@ dmypy.json
 
 # Rhistory
 .Rhistory
+.Rproj.user
+.RData
+
+# Repo specific directories
+/data/excavation_footage/
+/data/images/
+/data/overlay_videos

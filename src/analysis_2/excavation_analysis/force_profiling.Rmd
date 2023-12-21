@@ -1,0 +1,184 @@
+---
+title: "PROP_ADAIR_excavation_force_profiles"
+author: "Bo Meyering, Caroline Tardivo, Gabriel Pugina, Ute Albrecht"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(data.table)
+library(xts)
+library(GGally)
+```
+
+```{r force data import}
+
+# create a list of data frames
+df_list = list()
+
+# processed force profile pathdir
+profile_path = "../../../data/processed/excavation_data/processed_force_profiles/prop_adair/"
+
+file_names = dir(profile_path)
+for(file_name in file_names){
+        path = paste(profile_path, file_name, sep='')
+        df = fread(file = path)
+        df_list[[file_name]] = df
+}
+```
+
+```{r peak_force_values}
+# Create an empty data frame with names and column types
+df_force = data.frame(
+        sys_id = character(0),
+        ang45_ang = numeric(0),
+        ang45_n = numeric(0),
+        peak_ang = numeric(0),
+        peak_n = numeric(0),
+        peak45_ang = numeric(0),
+        peak45_n = numeric(0)
+)
+
+# populate the data frame
+for(name in names(df_list)){
+        ang45_idx = min(which(df_list[[name]]$ang_y <= 45))
+        ang45_row = df_list[[name]][ang45_idx,]
+
+        peak_idx = which.max(df_list[[name]]$std_trunk_effort_n)
+        peak_row = df_list[[name]][peak_idx,]
+        
+        peak45_idx = which.max(df_list[[name]][1:ang45_idx]$std_trunk_effort_n)
+        peak45_row = df_list[[name]][peak45_idx,]
+
+        df_force <- df_force %>%
+                add_row(
+                        tibble_row(
+                                sys_id=substr(toupper(name), start=1, stop=nchar(name)-4),
+                                ang45_ang=ang45_row$ang_y,
+                                ang45_n=ang45_row$std_trunk_effort_n,
+                                peak_ang=peak_row$ang_y,
+                                peak_n=peak_row$std_trunk_effort_n,
+                                peak45_ang=peak45_row$ang_y,
+                                peak45_n=peak45_row$std_trunk_effort_n
+                        )
+                )
+}
+
+```
+
+```{r radial density maps}
+# radial density maps
+rad_den_path = "../../../data/processed/radial_density_maps/prop_adair/"
+rad_filenames = dir(rad_den_path)
+rad_den_list = list()
+
+for(file_name in rad_filenames){
+        path = paste(rad_den_path, file_name, sep='')
+        rad_den_df = fread(path) %>% 
+                arrange(radius, angle)
+        tree_row = str_extract(file_name, '^\\d{2}[EW]+')
+        tree = str_extract(tree_row, "^\\d{2}")
+        row = paste("17", str_extract(tree_row, "[EW]{1}"), sep="")
+        sys_id = paste(row, tree, sep="_")
+        rad_den_list[[sys_id]] <- rad_den_df
+
+}
+
+degrees_radius_map <- rad_den_df[,3:4]
+
+den_mat <- matrix(nrow=0, ncol=2700)
+sys_id_labels = c()
+for(idx in names(rad_den_list)){
+        
+        vec <- as.vector(rad_den_list[[idx]]$density)
+        den_mat <- rbind(den_mat, vec)
+        sys_id_labels <- c(sys_id_labels, idx)
+}
+sys_id_labels <- data.frame(sys_id=sys_id_labels)
+
+sys_id_labels <- sys_id_labels %>% 
+        left_join(df_force, by='sys_id')
+
+# get rows of complete cases
+c_idx <- complete.cases(sys_id_labels)
+density_df <- cbind(sys_id_labels, den_mat)[c_idx,]
+col_names <- c(colnames(density_df[1:7]), paste("D", as.character(1:2700), sep='.'))
+colnames(density_df) <- col_names
+# den_mat <- den_mat[c_idx,]
+# sys_id_labels <- sys_id_labels[c_idx,]
+
+write.csv(density_df, file='../../../data/processed/radial_density_maps/prop_adair_densities.csv')
+```
+
+
+```{r join forces to metadata}
+meta <- fread('../../../metadata/join_tables/prop_adair_join_table.csv')
+growth <- fread('../../../data/raw/tree_growth/prop_adair_tree_growth_data.csv') %>% 
+        filter(t==2)
+sys_measurment <- fread('../../../data/raw/whole_root_system_measurements/prop_adair_root_system_measurement.csv')
+root_summaries <- fread('../../../data/processed/root_measurements/prop_adair_root_measurement_summary.csv')
+force_results <- df_force %>% 
+        left_join(meta, by='sys_id') %>%
+        dplyr::select(-comment) %>% 
+        left_join(growth, by='sys_id') %>% 
+        dplyr::select(-ends_with(".y")) %>% 
+        left_join(sys_measurment, by='sys_id') %>% 
+        # dplyr::select(-ends_with(".x")) %>% 
+        left_join(root_summaries, by='sys_id') %>% 
+        rename('rs'='rs.x', 
+               'prop_type'='prop_type.x')
+        # dplyr::select(-c(ends_with(".y"), ends_with(".x"), V1))
+
+num_data <- force_results %>% 
+        dplyr::select(-c(sys_id, ang45_ang, peak_ang, peak45_ang, measurement_date, t, direction:block))
+
+write.csv(force_results, "../../../data/processed/excavation_data/peak_force_tree_measurements.csv")
+
+```
+
+```{r cor plots}
+ggpairs(num_data[,3:9])
+ggpairs(num_data[,c(3, 10:14)])
+ggpairs(num_data[,c(3, 15:19)])
+ggpairs(num_data[,c(3, 20:24)])
+ggpairs(num_data[,c(3, 25:29)])
+ggpairs(num_data[,1:3])
+```
+
+
+```{r peak force plots}
+ang45_p <- ggplot(force_results, aes(x=rs, y=ang45_n, fill=rs))+
+        geom_boxplot()+
+        facet_wrap(~prop_type)
+
+ang45_p
+
+peak_p <- ggplot(force_results, aes(x=rs, y=peak_n, fill=rs))+
+        geom_boxplot()+
+        facet_wrap(~prop_type)
+
+peak_p
+
+peak45_p <- ggplot(force_results, aes(x=rs, y=peak45_n, fill=rs))+
+        geom_boxplot()+
+        facet_wrap(~prop_type)
+
+peak45_p
+```
+
+```{r plsr modeling}
+D_scaled <- as.data.frame(scale(density_df[,8:2007])) %>% 
+        mutate(peak_n = density_df$peak45_n) %>% 
+        select(peak_n, everything())
+pls_formula <- formula(D_scaled)
+peak_pls <- plsr(pls_formula, ncomp = 100, data = density_df, validation="LOO")
+plot(scores(peak_pls))
+
+plot(peak_pls)
+plot(peak_pls, ncomp = 1 ,plottype = "coef")
+plot(peak_pls, plottype = "correlation")
+plot(explvar(peak_pls))
+plot(cumsum(explvar(peak_pls)))
+```
+
