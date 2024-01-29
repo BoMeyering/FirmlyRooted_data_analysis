@@ -13,12 +13,14 @@ from numpy.linalg import norm
 from calc import unitVectors, polyPoints, getRings, getSlices, get_radial_masks
 
 # Set directories
-adair_radial_root = './data/root_crown_images/radial_images/PROP_ADAIR/'
-picos_radial_root = './data/root_crown_images/radial_images/PROP_PICOS/'
+# adair_radial_root = './data/root_crown_images/radial_images/PROP_ADAIR/'
+# picos_radial_root = './data/root_crown_images/radial_images/PROP_PICOS/'
+adair_radial_root = './data/images/PROP_ADAIR/radial'
+picos_radial_root = './data/images/PROP_PICOS/radial'
 
-adair_output = './data/output/PROP_ADAIR/'
-picos_output = './data/output/PROP_PICOS/'
-results_output = './data/output/results/'
+adair_output = './data/images/PROP_ADAIR/radial_output'
+picos_output = './data/images/PROP_PICOS/radial_output'
+results_output = './data/processed/radial_img_processing_results/'
 
 for path in [adair_output, picos_output, results_output]:
     if not os.path.exists(path):

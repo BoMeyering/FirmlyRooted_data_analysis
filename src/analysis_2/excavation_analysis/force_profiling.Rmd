@@ -10,6 +10,7 @@ library(tidyverse)
 library(data.table)
 library(xts)
 library(GGally)
+library(pls)
 ```
 
 ```{r force data import}
@@ -26,6 +27,16 @@ for(file_name in file_names){
         df = fread(file = path)
         df_list[[file_name]] = df
 }
+
+radial_data <- fread('../../../data/processed/radial_img_processing_results/prop_adair_image_results.csv') %>% 
+        filter(str_detect(image_name, '\\d{2}[EW]{1}')) %>% 
+        mutate(row=str_extract(image_name, '\\d{2}[EW]{1}'),
+               tree=str_extract(row, '\\d{2}'),
+               row=str_extract(row, '[EW]{1}'),
+               row=paste('17', row, sep=''),
+               sys_id=paste(row, tree, sep="_")) %>% 
+        dplyr::select(-c(V1, image_name, row, tree)) %>% 
+        dplyr::select(sys_id, everything())
 ```
 
 ```{r peak_force_values}
@@ -130,16 +141,18 @@ force_results <- df_force %>%
                'prop_type'='prop_type.x')
         # dplyr::select(-c(ends_with(".y"), ends_with(".x"), V1))
 
-num_data <- force_results %>% 
-        dplyr::select(-c(sys_id, ang45_ang, peak_ang, peak45_ang, measurement_date, t, direction:block))
+num_data <- force_results #%>% 
+        # dplyr::select(-c(sys_id, ang45_ang, peak_ang, peak45_ang, measurement_date, t, direction:block))
 
 write.csv(force_results, "../../../data/processed/excavation_data/peak_force_tree_measurements.csv")
 
 ```
 
 ```{r cor plots}
-ggpairs(num_data[,3:9])
-ggpairs(num_data[,c(3, 10:14)])
+# ggpairs(num_data[,3:9])
+ggpairs(num_data[,c(3, 26:30)], aes(color=num_data$rs, alpha=.5), progress = FALSE)+
+        scale_color_viridis_d()+
+        scale_fill_viridis_d()
 ggpairs(num_data[,c(3, 15:19)])
 ggpairs(num_data[,c(3, 20:24)])
 ggpairs(num_data[,c(3, 25:29)])
@@ -181,4 +194,91 @@ plot(peak_pls, plottype = "correlation")
 plot(explvar(peak_pls))
 plot(cumsum(explvar(peak_pls)))
 ```
+
+```{r}
+pls_data <- density_df[, 7:2707]
+scaled_data <- scale(pls_data)
+
+pls_formula <- formula(pls_data)
+
+scaled_data <- as.data.frame(scaled_data)
+
+pls_mod <- plsr(formula=pls_formula, ncomp = 50, data=scaled_data, validation="LOO", )
+
+cumsum(explvar(pls_mod))
+```
+
+
+```{r}
+coef_df <- degrees_radius_map %>% 
+        mutate(coef = as.vector(coef(pls_mod)))
+
+
+area = c()
+for(i in 1:2700){
+        if(coef_df$angle[i] <= 45){
+                area= c(area, "front")
+        } else if(coef_df$angle[i]>45 & coef_df$angle[i]<=135){
+                area=c(area, "side")
+        } else if(coef_df$angle[i] > 135 & coef_df$angle[i] <= 225){
+                area=c(area, "back")
+        } else if(coef_df$angle[i] > 225 & coef_df$angle[i] <= 315){
+                area=c(area, "side")
+        } else {
+                area=c(area, "front")
+        }
+}
+
+coef_df <- coef_df %>% 
+        mutate(area=area)
+vlines = seq(from=0, to=2700, by=90)
+```
+
+
+
+```{r}
+coef_df
+```
+
+
+
+```{r}
+coef_plot <- ggplot(coef_df[1:2700,], aes(x=1:2700, y=coef))+
+        # geom_point()+
+        geom_line()
+        # geom_vline(xintercept = vlines[1:12])
+        # scale_color_viridis_d()
+
+coef_plot
+```
+
+
+
+
+
+```{r}
+ggplot(coef_df, aes(angle, y=coef))+
+        geom_point(aes(color=area))+
+        geom_smooth(aes(shape=NULL))+
+        geom_vline(xintercept = c(90, 180, 270))+
+        scale_color_viridis_d(option = 'D', begin=.2, end=.85)
+
+```
+
+
+```{r}
+radial_data <- radial_data %>% 
+        right_join(meta, by='sys_id')
+```
+
+```{r}
+force_radial_df <- radial_data %>% 
+        right_join(select(num_data, sys_id, peak45_n), by='sys_id') %>% 
+        mutate(block = as.factor(block))
+
+mm1 <- lmer(peak45_n ~ rs * prop_type + solidity*variance_PC1 + (1|block), data=force_radial_df)
+
+```
+
+
 
