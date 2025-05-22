@@ -1,6 +1,6 @@
 import pandas as pd
 
-from threshold import blueThreshold, manualThreshold
+from src_py.threshold import blueThreshold, manualThreshold
 import cv2
 from glob import glob
 import os
@@ -10,40 +10,45 @@ from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
 from numpy import dot, arccos, clip
 from numpy.linalg import norm
-from calc import unitVectors, polyPoints, getRings, getSlices, get_radial_masks
+from src_py.calc import unitVectors, polyPoints, getRings, getSlices, get_radial_masks
+from src_py.polar_plot import plot_radial_density
 
 # Set directories
-# adair_radial_root = './data/root_crown_images/radial_images/PROP_ADAIR/'
-# picos_radial_root = './data/root_crown_images/radial_images/PROP_PICOS/'
 adair_radial_root = './data/images/PROP_ADAIR/radial'
 picos_radial_root = './data/images/PROP_PICOS/radial'
 
+# Set output paths
 adair_output = './data/images/PROP_ADAIR/radial_output'
 picos_output = './data/images/PROP_PICOS/radial_output'
 results_output = './data/processed/radial_img_processing_results/'
 
+# Mkdir for paths that don't exist
 for path in [adair_output, picos_output, results_output]:
     if not os.path.exists(path):
         os.makedirs(path)
 
 # Set variables
-cropDst = 1393 # 30cm from center of tree
-cnt_threshold = 50
-img_shape = (3456, 5184)
-n_rings = 30
-n_slices = 90
-radii = list(np.rint([i*cropDst/n_rings for i in range(1, n_rings+1)]).astype(int))
+CROPDST = 1393 # 30cm from center of tree
+CNT_AREA_THRESHOLD = 50
+IMG_SHAPE = (3456, 5184)
+N_RINGS = 30
+N_SLICES = 90
+RADII = list(np.rint([i*CROPDST/N_RINGS for i in range(1, N_RINGS+1)]).astype(int))
+ALPHA = 0.5
+BETA = 1 - ALPHA
 
 # Precompute radial masks
-vecs = unitVectors(n_slices)
+vecs = unitVectors(N_SLICES)
 
-
+# Grab all photo names
 adair_file_list = glob('*.JPG', root_dir=adair_radial_root)
 picos_file_list = glob('*.JPG', root_dir=picos_radial_root)
 
+# Grab any existing radial density maps
 radial_results_file_list = glob('*radial_density.csv', root_dir=results_output)
+print(radial_results_file_list)
 
-# Set up results files
+# Set up results data frame
 image_results = pd.DataFrame(columns=['image_name',
                                       'center_x',
                                       'center_y',
@@ -54,13 +59,18 @@ image_results = pd.DataFrame(columns=['image_name',
                                       'center_offset',
                                       'variance_PC1',
                                       'variance_PC2',
-                                      'angle_PC1'
+                                      'angle_PC1',
+                                      'asi'
                                       ]
                              )
 
 # Lambda functions
-flip = lambda x: img_shape[0] - x
+flip = lambda x: IMG_SHAPE[0] - x
+
+# Combined file list
 combined_file_list = [adair_file_list, picos_file_list]
+
+# Main processing loop
 for file_list in combined_file_list:
     if file_list == adair_file_list:
         output_dir = adair_output
@@ -70,13 +80,16 @@ for file_list in combined_file_list:
         image_dir = picos_radial_root
     for i, file in enumerate(file_list):
         print(file)
+
+        # Read in image, convert to HSV, and threshold
         img = cv2.imread(os.path.join(image_dir, file))
         hsv_img = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
         fimg = cv2.inRange(hsv_img, (0, 0, 0), (95, 255, 255))
-        cv2.imwrite(os.path.join(output_dir, f"{file[:-4]}_binary.JPG"), fimg)
+        cv2.imwrite(os.path.join(output_dir, f"{file[:-4]}_binary.PNG"), fimg)
 
+        # Blur image
         blurred = cv2.GaussianBlur(fimg, (3, 3), 1, 1)
-        cv2.imwrite(os.path.join(output_dir, f"{file[:-4]}_blurred.JPG"), blurred)
+        cv2.imwrite(os.path.join(output_dir, f"{file[:-4]}_blurred.PNG"), blurred)
 
         # Limit scope of Hough circles search
         zero_mask = np.zeros(fimg.shape, dtype=np.uint8)
@@ -84,13 +97,14 @@ for file_list in combined_file_list:
         center_mask_img = cv2.bitwise_and(blurred, blurred, mask=center_circle)
         cv2.imwrite(os.path.join(output_dir, f"{file[:-4]}_center.JPG"), center_mask_img)
 
+        # Find the center of the root system using Hough circles
         # Iterate through sensitivity params, param for filtering the "perfectness" of the circle
         # Smaller i = less perfect circles accepted
         for i in [0, .1, .2, .3, .4, .5, .6, .7, .8, .9, .99]:
             circles = cv2.HoughCircles(center_mask_img, cv2.HOUGH_GRADIENT_ALT, 3, minDist=300, param1=300, param2=i,
                                        minRadius=5, maxRadius=45)
             src = cv2.imread(os.path.join(image_dir, file))
-            if len(circles) == 1:
+            if len(circles) == 1: # Check for only one circle detected
                 for circle in circles[0]:
                     center_x, center_y, radius = circle
                     cv2.circle(src, (int(center_x), int(center_y)), int(radius), (0, 255,), 2)
@@ -100,18 +114,18 @@ for file_list in combined_file_list:
                 break
             elif circles is None:
                 print("No circles found for ", file)
-                center = {'image_name': file, 'center_x': NULL, 'center_y': NULL, 'radius': NULL}
+                center = {'image_name': file, 'center_x': None, 'center_y': None, 'radius': None}
 
-        # Crop root system to cropDst
+        # Crop root system to CROPDST
         center_point = (int(center_x), int(center_y))
         crop_mask = np.zeros(fimg.shape, dtype=np.uint8)
-        cv2.circle(crop_mask, (int(center_x), int(center_y)), cropDst, 255, -1)
+        cv2.circle(crop_mask, (int(center_x), int(center_y)), CROPDST, 255, -1)
         cropped = cv2.bitwise_and(fimg, fimg, mask=crop_mask)
-        cv2.imwrite(os.path.join(output_dir, f"{file[:-4]}_cropped.JPG"), cropped)
+        cv2.imwrite(os.path.join(output_dir, f"{file[:-4]}_cropped.PNG"), cropped)
         contours, _ = cv2.findContours(cropped, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
         # Calculate convex hull
-        filtered_cnts = [cnt for cnt in contours if cv2.contourArea(cnt) >= cnt_threshold]
+        filtered_cnts = [cnt for cnt in contours if cv2.contourArea(cnt) >= CNT_AREA_THRESHOLD]
         hull = []
         filtered_cnts = np.concatenate(filtered_cnts)
         hull_i = cv2.convexHull(filtered_cnts, False)
@@ -123,20 +137,25 @@ for file_list in combined_file_list:
         hull_mask = np.zeros(fimg.shape, np.uint8)
         hull_mask = cv2.drawContours(hull_mask, hull, -1, 255, -1)
         hull_img = cv2.bitwise_and(hull_img, hull_img, mask=hull_mask)
+
+        # Calculate the total root area and add in the center dot
         root_area = np.sum(hull_img)/255 + (np.pi*(radius**2))
 
+        # Write convex hull image and write to data frame
         cv2.drawContours(hull_img, hull, -1, 200, 4)
-        cv2.imwrite(os.path.join(output_dir, f"{file[:-4]}_convexhull.JPG"), hull_img)
+        cv2.imwrite(os.path.join(output_dir, f"{file[:-4]}_convexhull.PNG"), hull_img)
         results['convex_hull_area'] = hull_area
         results['root_area'] = root_area
         results['solidity'] = root_area/hull_area
 
         # Radial density measurements
         if f"{file[:-4]}_radial_density.csv" not in radial_results_file_list:
-            poly_points, angles = polyPoints(vecs, cropDst, center_point)
-            rings = getRings(radii, img_shape, center_point)
-            slices = getSlices(poly_points, img_shape)
-            masked_slices = get_radial_masks(rings, slices, img_shape)
+
+            # Calculate the radial density for each slice/ring combination
+            poly_points, angles = polyPoints(vecs, CROPDST, center_point)
+            rings = getRings(RADII, IMG_SHAPE, center_point)
+            slices = getSlices(poly_points, IMG_SHAPE)
+            masked_slices = get_radial_masks(rings, slices, IMG_SHAPE)
 
             n_masks = len(rings)*len(slices)
             # pbar = tqdm([i for i in range(n_masks)])
@@ -152,10 +171,18 @@ for file_list in combined_file_list:
 
                 root_area = np.sum(masked_roots)
                 density = root_area/mask_area
-                res = {"image_name": file, "radius": radii[i], "angle": angles[j], "density": density}
+                res = {"image_name": file, "radius": RADII[i], "angle": angles[j], "density": density}
                 radial_results = pd.concat([radial_results, pd.DataFrame(res, index=[0])], ignore_index=True)
 
+                radial_plot_path = os.path.join(output_dir, f"{file[:-4]}_radial_density.PNG")
+                plot_radial_density(radial_results, out_path=radial_plot_path)
+
             radial_results.to_csv(os.path.join(results_output, f"{file[:-4]}_radial_density.csv"))
+        else:
+            radial_results = pd.read_csv(os.path.join(results_output, f"{file[:-4]}_radial_density.csv"))
+            radial_plot_path = os.path.join(output_dir, f"{file[:-4]}_radial_density.PNG")
+            plot_radial_density(radial_results, out_path=radial_plot_path)
+
 
         # PCA decomp of binary images for symmetry
         scaler = StandardScaler()
@@ -170,7 +197,7 @@ for file_list in combined_file_list:
 
         # Grab center point from the image and scale
         flipped_center = list(center_point)
-        flipped_center[1] = img_shape[0] - center_point[1]
+        flipped_center[1] = IMG_SHAPE[0] - center_point[1]
         # print(center_point, flipped_center)
         flipped_center = np.array([flipped_center])
         scaled_center = scaler.transform(flipped_center)
@@ -186,6 +213,7 @@ for file_list in combined_file_list:
         angle = arccos(cos_theta)
         angle = np.degrees(np.array(angle))
         print(f"Angle: {angle}")
+        print(f"NORM: {np.linalg.norm(pca.components_[0])}")
 
 
         print(f"Offset: {offset}")
@@ -197,8 +225,13 @@ for file_list in combined_file_list:
         results['variance_PC2'] = pca.explained_variance_ratio_[1]
         results['angle_PC1'] = angle
 
+        # Calculate asymmetry index and normalize
+        a_var = np.abs(pca.explained_variance_ratio_[0] - pca.explained_variance_ratio_[1])
+        asi = ALPHA * a_var + BETA * offset
+        asi = asi / (1 + asi)
+        results['asi'] = asi
+
         image_results = pd.concat([image_results, pd.DataFrame(results, index=[0])], ignore_index=True)
 
-
-
+    # Write out final data extraction results
     image_results.to_csv(os.path.join(results_output, "prop_adair_image_results.csv"))

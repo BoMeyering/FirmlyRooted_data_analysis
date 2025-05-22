@@ -1,0 +1,321 @@
+---
+title: "Plot Level Analysis"
+author: "Bo Meyering"
+date: "2024-08-07"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Library Imports
+```{r}
+library(tidyverse)
+library(lme4)
+library(emmeans)
+library(lmerTest)
+library(broom)
+library(multcomp)
+library(multcompView)
+```
+
+# Data Imports
+```{r}
+pa_plot_data <- read.csv("../../data/processed/cleaned_data/prop_adair_plot_level.csv") %>% 
+        mutate(trial="pa")
+pp_plot_data <- read.csv("../../data/processed/cleaned_data/prop_picos_plot_level.csv") %>% 
+        mutate(trial="pp")
+
+combined_data = rbind(pa_plot_data, pp_plot_data) %>% 
+        dplyr::select(trial, everything())
+
+factor_cols <- c('trial', 'rs', 'prop_type', 'block')
+combined_data[,factor_cols] <- lapply(combined_data[,factor_cols], factor)
+```
+
+# qPCR Modeling
+```{r}
+pcr_data <- combined_data[complete.cases(combined_data),]
+pcr_mm <- lmer(hlb_ct_adj ~ rs * prop_type + (1|block), data=pcr_data)
+pcr_aov <- anova(pcr_mm)
+pcr_rs_emm <- emmeans(pcr_mm, ~rs)
+pcr_prop_emm <- emmeans(pcr_mm, ~prop_type)
+pcr_rs_cld <- cld(pcr_rs_emm, Letters=letters, decreasing=TRUE)
+pcr_prop_cld <- cld(pcr_prop_emm, Letters=letters, decreasing=TRUE)
+```
+
+# Nutrient Models Prop Adair
+```{r prop_adair nutrient mixed models}
+# nitrogen
+n_mm <- lmer(n_per ~ rs * prop_type + (1|block), data=pa_plot_data)
+n_aov <- anova(n_mm)
+n_rs_emm <- emmeans(n_mm, ~rs)
+n_prop_emm <- emmeans(n_mm, ~prop_type)
+n_rs_cld <- cld(n_rs_emm, Letters=letters, decreasing=TRUE)
+n_prop_cld <- cld(n_prop_emm, Letters=letters, decreasing=TRUE)
+
+# phosphorus
+p_mm <- lmer(p_per ~ rs * prop_type + (1|block), data=pa_plot_data)
+p_aov <- anova(p_mm)
+p_rs_emm <- emmeans(p_mm, ~rs)
+p_prop_emm <- emmeans(p_mm, ~prop_type)
+p_rs_cld <- cld(p_rs_emm, Letters=letters, decreasing=TRUE)
+p_prop_cld <- cld(p_prop_emm, Letters=letters, decreasing=TRUE)
+
+# potassium
+k_mm <- lmer(k_per ~ rs * prop_type + (1|block), data=pa_plot_data)
+k_aov <- anova(k_mm)
+k_rs_emm <- emmeans(k_mm, ~rs)
+k_prop_emm <- emmeans(k_mm, ~prop_type)
+k_rs_cld <- cld(k_rs_emm, Letters=letters, decreasing=TRUE)
+k_prop_cld <- cld(k_prop_emm, Letters=letters, decreasing=TRUE)
+
+# magnesium
+mg_mm <- lmer(mg_per ~ rs * prop_type + (1|block), data=pa_plot_data)
+mg_aov <- anova(mg_mm)
+mg_rs_emm <- emmeans(mg_mm, ~rs)
+mg_prop_emm <- emmeans(mg_mm, ~prop_type)
+mg_rs_cld <- cld(mg_rs_emm, Letters=letters, decreasing=TRUE)
+mg_prop_cld <- cld(mg_prop_emm, Letters=letters, decreasing=TRUE)
+
+# calcium
+ca_mm <- lmer(ca_per ~ rs * prop_type + (1|block), data=pa_plot_data)
+ca_aov <- anova(ca_mm)
+ca_rs_emm <- emmeans(ca_mm, ~rs)
+ca_prop_emm <- emmeans(ca_mm, ~prop_type)
+ca_rs_cld <- cld(ca_rs_emm, Letters=letters, decreasing=TRUE)
+ca_prop_cld <- cld(ca_prop_emm, Letters=letters, decreasing=TRUE)
+
+# sulphur
+s_mm <- lmer(s_per ~ rs * prop_type + (1|block), data=pa_plot_data)
+s_aov <- anova(s_mm)
+s_rs_emm <- emmeans(s_mm, ~rs)
+s_prop_emm <- emmeans(s_mm, ~prop_type)
+s_rs_cld <- cld(s_rs_emm, Letters=letters, decreasing=TRUE)
+s_prop_cld <- cld(s_prop_emm, Letters=letters, decreasing=TRUE)
+
+# boron
+b_mm <- lmer(b_ppm ~ rs * prop_type + (1|block), data=pa_plot_data)
+b_aov <- anova(b_mm)
+b_rs_emm <- emmeans(b_mm, ~rs)
+b_prop_emm <- emmeans(b_mm, ~prop_type)
+b_rs_cld <- cld(b_rs_emm, Letters=letters, decreasing=TRUE)
+b_prop_cld <- cld(b_prop_emm, Letters=letters, decreasing=TRUE)
+
+# zinc
+zn_mm <- lmer(zn_ppm ~ rs * prop_type + (1|block), data=pa_plot_data)
+zn_aov <- anova(zn_mm)
+zn_rs_emm <- emmeans(zn_mm, ~rs)
+zn_prop_emm <- emmeans(zn_mm, ~prop_type)
+zn_rs_cld <- cld(zn_rs_emm, Letters=letters, decreasing=TRUE)
+zn_prop_cld <- cld(zn_prop_emm, Letters=letters, decreasing=TRUE)
+
+# manganese
+mn_mm <- lmer(mn_ppm ~ rs * prop_type + (1|block), data=pa_plot_data)
+mn_aov <- anova(mn_mm)
+mn_rs_emm <- emmeans(mn_mm, ~rs)
+mn_prop_emm <- emmeans(mn_mm, ~prop_type)
+mn_rs_cld <- cld(mn_rs_emm, Letters=letters, decreasing=TRUE)
+mn_prop_cld <- cld(mn_prop_emm, Letters=letters, decreasing=TRUE)
+
+# iron
+fe_mm <- lmer(fe_ppm ~ rs * prop_type + (1|block), data=pa_plot_data)
+fe_aov <- anova(fe_mm)
+fe_rs_emm <- emmeans(fe_mm, ~rs)
+fe_prop_emm <- emmeans(fe_mm, ~prop_type)
+fe_rs_cld <- cld(fe_rs_emm, Letters=letters, decreasing=TRUE)
+fe_prop_cld <- cld(fe_prop_emm, Letters=letters, decreasing=TRUE)
+
+# copper
+cu_mm <- lmer(cu_ppm ~ rs * prop_type + (1|block), data=pa_plot_data)
+cu_aov <- anova(cu_mm)
+cu_rs_emm <- emmeans(cu_mm, ~rs)
+cu_prop_emm <- emmeans(cu_mm, ~prop_type)
+cu_rs_cld <- cld(cu_rs_emm, Letters=letters, decreasing=TRUE)
+cu_prop_cld <- cld(cu_prop_emm, Letters=letters, decreasing=TRUE)
+
+aov_list <- list(n_aov, p_aov, k_aov, mg_aov, ca_aov, s_aov, b_aov, zn_aov, mn_aov, fe_aov, cu_aov)
+rs_cld_list <- list(n_rs_cld, p_rs_cld, k_rs_cld, mg_rs_cld, ca_rs_cld, s_rs_cld, b_rs_cld, zn_rs_cld, mn_rs_cld, fe_rs_cld, cu_rs_cld)
+prop_cld_list <- list(n_prop_cld, p_prop_cld, k_prop_cld, mg_prop_cld, ca_prop_cld, s_prop_cld, b_prop_cld, zn_prop_cld, mn_prop_cld, fe_prop_cld, cu_prop_cld)
+
+name_vec = c('nitrogen', 'phosphorus', 'potassium', 'magnesium', 'calcium',
+             'sulphur', 'boron', 'zinc', 'manganese', 'iron', 'copper')
+
+pa_rs_df <- data.frame('rs' = c('US-1516', 'US-812', 'US-897', 'US-942'))
+pa_rs_aov <- c(' ')
+pa_prop_df <- data.frame('prop_type' = c('ct', 'mpg', 'sd'))
+pa_prop_aov <- c(' ')
+
+for (i in 1:length(rs_cld_list)) {
+
+        tmp <- data.frame(rs_cld_list[[i]]) %>% 
+                mutate(mean_letter = paste(sprintf("%.4f", emmean), trimws(.group, 'both'), sep=' '))
+        pa_rs_df <- pa_rs_df %>%
+                left_join(tmp[,c(1, 8)], by='rs')
+        p_value <- aov_list[[i]]$"Pr(>F)"[1]
+        pa_rs_aov <- c(pa_rs_aov, round(p_value, 6))
+
+        
+        tmp <- data.frame(prop_cld_list[[i]]) %>% 
+                mutate(mean_letter = paste(sprintf("%.4f", emmean), trimws(.group, 'both'), sep=' '))
+        pa_prop_df <- pa_prop_df %>%
+                left_join(tmp[,c(1, 8)], by='prop_type')
+        p_value <- aov_list[[i]]$"Pr(>F)"[2]
+        pa_prop_aov <- c(pa_prop_aov, sprintf("%.4f", p_value))
+}
+colnames(pa_rs_df)[2:12] <- name_vec
+colnames(pa_prop_df)[2:12] <- name_vec
+
+pa_rs_df <- rbind(pa_rs_df, pa_rs_aov)
+pa_prop_df <- rbind(pa_prop_df, pa_prop_aov)
+```
+
+# Nutrient Models Prop Picos
+```{r prop_picos nutrient mixed models}
+# nitrogen
+n_mm <- lmer(n_per ~ rs * prop_type + (1|block), data=pp_plot_data)
+n_aov <- anova(n_mm)
+n_rs_emm <- emmeans(n_mm, ~rs)
+n_prop_emm <- emmeans(n_mm, ~prop_type)
+n_rs_cld <- cld(n_rs_emm, Letters=letters, decreasing=TRUE)
+n_prop_cld <- cld(n_prop_emm, Letters=letters, decreasing=TRUE)
+
+# phosphorus
+p_mm <- lmer(p_per ~ rs * prop_type + (1|block), data=pp_plot_data)
+p_aov <- anova(p_mm)
+p_rs_emm <- emmeans(p_mm, ~rs)
+p_prop_emm <- emmeans(p_mm, ~prop_type)
+p_rs_cld <- cld(p_rs_emm, Letters=letters, decreasing=TRUE)
+p_prop_cld <- cld(p_prop_emm, Letters=letters, decreasing=TRUE)
+
+# potassium
+k_mm <- lmer(k_per ~ rs * prop_type + (1|block), data=pp_plot_data)
+k_aov <- anova(k_mm)
+k_rs_emm <- emmeans(k_mm, ~rs)
+k_prop_emm <- emmeans(k_mm, ~prop_type)
+k_rs_cld <- cld(k_rs_emm, Letters=letters, decreasing=TRUE)
+k_prop_cld <- cld(k_prop_emm, Letters=letters, decreasing=TRUE)
+
+# magnesium
+mg_mm <- lmer(mg_per ~ rs * prop_type + (1|block), data=pp_plot_data)
+mg_aov <- anova(mg_mm)
+mg_rs_emm <- emmeans(mg_mm, ~rs)
+mg_prop_emm <- emmeans(mg_mm, ~prop_type)
+mg_rs_cld <- cld(mg_rs_emm, Letters=letters, decreasing=TRUE)
+mg_prop_cld <- cld(mg_prop_emm, Letters=letters, decreasing=TRUE)
+
+# calcium
+ca_mm <- lmer(ca_per ~ rs * prop_type + (1|block), data=pp_plot_data)
+ca_aov <- anova(ca_mm)
+ca_rs_emm <- emmeans(ca_mm, ~rs)
+ca_prop_emm <- emmeans(ca_mm, ~prop_type)
+ca_rs_cld <- cld(ca_rs_emm, Letters=letters, decreasing=TRUE)
+ca_prop_cld <- cld(ca_prop_emm, Letters=letters, decreasing=TRUE)
+
+# sulphur
+s_mm <- lmer(s_per ~ rs * prop_type + (1|block), data=pp_plot_data)
+s_aov <- anova(s_mm)
+s_rs_emm <- emmeans(s_mm, ~rs)
+s_prop_emm <- emmeans(s_mm, ~prop_type)
+s_rs_cld <- cld(s_rs_emm, Letters=letters, decreasing=TRUE)
+s_prop_cld <- cld(s_prop_emm, Letters=letters, decreasing=TRUE)
+
+# boron
+b_mm <- lmer(b_ppm ~ rs * prop_type + (1|block), data=pp_plot_data)
+b_aov <- anova(b_mm)
+b_rs_emm <- emmeans(b_mm, ~rs)
+b_prop_emm <- emmeans(b_mm, ~prop_type)
+b_rs_cld <- cld(b_rs_emm, Letters=letters, decreasing=TRUE)
+b_prop_cld <- cld(b_prop_emm, Letters=letters, decreasing=TRUE)
+
+# zinc
+zn_mm <- lmer(zn_ppm ~ rs * prop_type + (1|block), data=pp_plot_data)
+zn_aov <- anova(zn_mm)
+zn_rs_emm <- emmeans(zn_mm, ~rs)
+zn_prop_emm <- emmeans(zn_mm, ~prop_type)
+zn_rs_cld <- cld(zn_rs_emm, Letters=letters, decreasing=TRUE)
+zn_prop_cld <- cld(zn_prop_emm, Letters=letters, decreasing=TRUE)
+
+# manganese
+mn_mm <- lmer(mn_ppm ~ rs * prop_type + (1|block), data=pp_plot_data)
+mn_aov <- anova(mn_mm)
+mn_rs_emm <- emmeans(mn_mm, ~rs)
+mn_prop_emm <- emmeans(mn_mm, ~prop_type)
+mn_rs_cld <- cld(mn_rs_emm, Letters=letters, decreasing=TRUE)
+mn_prop_cld <- cld(mn_prop_emm, Letters=letters, decreasing=TRUE)
+
+# iron
+fe_mm <- lmer(fe_ppm ~ rs * prop_type + (1|block), data=pp_plot_data)
+fe_aov <- anova(fe_mm)
+fe_rs_emm <- emmeans(fe_mm, ~rs)
+fe_prop_emm <- emmeans(fe_mm, ~prop_type)
+fe_rs_cld <- cld(fe_rs_emm, Letters=letters, decreasing=TRUE)
+fe_prop_cld <- cld(fe_prop_emm, Letters=letters, decreasing=TRUE)
+
+# copper
+cu_mm <- lmer(cu_ppm ~ rs * prop_type + (1|block), data=pp_plot_data)
+cu_aov <- anova(cu_mm)
+cu_rs_emm <- emmeans(cu_mm, ~rs)
+cu_prop_emm <- emmeans(cu_mm, ~prop_type)
+cu_rs_cld <- cld(cu_rs_emm, Letters=letters, decreasing=TRUE)
+cu_prop_cld <- cld(cu_prop_emm, Letters=letters, decreasing=TRUE)
+
+aov_list <- list(n_aov, p_aov, k_aov, mg_aov, ca_aov, s_aov, b_aov, zn_aov, mn_aov, fe_aov, cu_aov)
+rs_cld_list <- list(n_rs_cld, p_rs_cld, k_rs_cld, mg_rs_cld, ca_rs_cld, s_rs_cld, b_rs_cld, zn_rs_cld, mn_rs_cld, fe_rs_cld, cu_rs_cld)
+prop_cld_list <- list(n_prop_cld, p_prop_cld, k_prop_cld, mg_prop_cld, ca_prop_cld, s_prop_cld, b_prop_cld, zn_prop_cld, mn_prop_cld, fe_prop_cld, cu_prop_cld)
+
+name_vec = c('nitrogen', 'phosphorus', 'potassium', 'magnesium', 'calcium',
+             'sulphur', 'boron', 'zinc', 'manganese', 'iron', 'copper')
+
+pp_rs_df <- data.frame('rs' = c('US-1516', 'US-812', 'US-897', 'US-942'))
+pp_rs_aov <- c('ANOVA')
+pp_prop_df <- data.frame('prop_type' = c('ct', 'mpg', 'sd'))
+pp_prop_aov <- c('ANOVA')
+
+for (i in 1:length(rs_cld_list)) {
+
+        tmp <- data.frame(rs_cld_list[[i]]) %>% 
+                mutate(mean_letter = paste(sprintf("%.4f", emmean), trimws(.group, 'both'), sep=' '))
+        pp_rs_df <- pp_rs_df %>%
+                left_join(tmp[,c(1, 8)], by='rs')
+        p_value <- aov_list[[i]]$"Pr(>F)"[1]
+        pp_rs_aov <- c(pp_rs_aov, round(p_value, 6))
+
+        
+        tmp <- data.frame(prop_cld_list[[i]]) %>% 
+                mutate(mean_letter = paste(sprintf("%.4f", emmean), trimws(.group, 'both'), sep=' '))
+        pp_prop_df <- pp_prop_df %>%
+                left_join(tmp[,c(1, 8)], by='prop_type')
+        p_value <- aov_list[[i]]$"Pr(>F)"[2]
+        pp_prop_aov <- c(pp_prop_aov, sprintf("%.4f", p_value))
+}
+colnames(pp_rs_df)[2:12] <- name_vec
+colnames(pp_prop_df)[2:12] <- name_vec
+
+pp_rs_df <- rbind(pp_rs_df, pp_rs_aov)
+pp_prop_df <- rbind(pp_prop_df, pp_prop_aov)
+```
+
+```{r output data}
+write.csv(pcr_aov, '../../manuscripts/analysis_output_tables/pcr_aov_table.csv')
+write.csv(pcr_rs_cld, '../../manuscripts/analysis_output_tables/pcr_rs_cld_table.csv')
+write.csv(pcr_prop_cld, '../../manuscripts/analysis_output_tables/pcr_prop_cld_table.csv')
+
+write.csv(pa_rs_df, '../../manuscripts/analysis_output_tables/prop_adair_rs_table.csv')
+write.csv(pa_prop_df, '../../manuscripts/analysis_output_tables/prop_adair_prop_table.csv')
+
+write.csv(pp_rs_df, '../../manuscripts/analysis_output_tables/prop_picos_rs_table.csv')
+write.csv(pp_prop_df, '../../manuscripts/analysis_output_tables/prop_picos_prop_table.csv')
+
+```
+
+```{r environment cleanup}
+# Remove mixed models, ANOVA, emmeans, and CLD objects
+rm(list=ls()[grep("_mm", ls())])
+rm(list=ls()[grep("_aov", ls())])
+rm(list=ls()[grep("_emm", ls())])
+rm(list=ls()[grep("_cld", ls())]) 
+rm(combined_data)
+
+```

@@ -16,16 +16,16 @@ library(emmeans)
 library(tidyverse)
 library(lme4)
 library(readxl)
-#library(lmer)
 library(lmerTest)
 library(multcomp)
 ```
 
 
-## Data Import
+## PROP_ADAIR Data Import
 ```{r data import}
 raw_data <- read.csv("../../data/raw/tree_growth/prop_adair_tree_growth_data.csv", na = "NA") %>% 
-        dplyr::select(-comment)
+        dplyr::select(-c(comment, rhizotron, tube_no)) %>% 
+        filter(t==2)
 raw_data <- raw_data[complete.cases(raw_data),]
 raw_data$rs <- as.factor(raw_data$rs)
 raw_data$prop_type <- as.factor(raw_data$prop_type)
@@ -37,8 +37,14 @@ raw_data <- raw_data %>%
                di = mean(c(di_1, di_2)),
                thick = mean(c(thick_1, thick_2)), 
                color = mean(c(color_1, color_2)),
-               soil_density_kpa = mean(c(sd_1_kpa, sd_2_kpa, sd_3_kpa, sd_4_kpa))) %>% 
-        rename(soil_moisture_vwc = soil_vmc_pct)
+               soil_density_kpa = mean(c_across(c('sd_1_kpa', 'sd_2_kpa', 'sd_3_kpa', 'sd_4_kpa')), na.rm=TRUE)) %>% 
+        rename(soil_moisture_vwc = soil_vmc_pct) %>% 
+        dplyr::select(sys_id:prop_type, rs_cm:height_cm, soil_moisture_vwc, can_vol_m3:soil_density_kpa) %>% 
+        dplyr::select(plot_id, block:soil_density_kpa) %>% 
+        group_by(plot_id, block, rs, prop_type) %>% 
+        summarize_all(mean)
+
+raw_data = raw_data[-15,]
 
 attach(raw_data)
 ```
@@ -71,12 +77,15 @@ pvalue_table <- function(model_vec, num_factors){
 
  
 x <- pvalue_table(c(mm_height, mm_rscm, mm_sccm, mm_canvol, mm_di, mm_thick, mm_color, mm_soildensity), 3)
+colnames(x) <- c("factor", "height", "rs_dia", "sc_dia", "can_vol", "di", "thick", "color", "soil_density")
+print(x)
 ```
 
 ## means extraction for rootstocks
 ```{r rootstock extraction, echo=TRUE}
 means_extract <- function(model_name, spec_factor){
         emm <- emmeans(model_name, spec_factor)
+        print(model_name)
         print(emm)
         emm <- as.data.frame(emm) %>% 
                 rowwise() %>% 
@@ -94,7 +103,17 @@ rs_thick <- means_extract(mm_thick, spec_factor = "rs")
 rs_color <- means_extract(mm_color, spec_factor = "rs")
 rs_soildensity <- means_extract(mm_soildensity, spec_factor = "rs")
 
+cld_height  = cld(emmeans(mm_height, ~ rs), Letters = letters, reversed = TRUE)
+cld_rs  = cld(emmeans(mm_rscm, ~ rs), Letters = letters, reversed = TRUE)
+cld_sc  = cld(emmeans(mm_sccm, ~ rs), Letters = letters, reversed = TRUE)
+cld_can  = cld(emmeans(mm_canvol, ~ rs), Letters = letters, reversed = TRUE)
+cld_di = cld(emmeans(mm_di, ~ rs), Letters = letters, reversed = TRUE)
 
+cld_height
+cld_rs
+cld_sc
+cld_can
+cld_di
 ```
 
 
@@ -124,3 +143,117 @@ int_soildensity <- means_extract(mm_soildensity, ~ rs:prop_type)
 ```
 
 
+
+
+
+
+## PROP_PICOS Data Import
+```{r data import}
+p_raw_data <- read.csv("../../data/raw/tree_growth/prop_picos_tree_growth_data.csv", na = "NA") %>% 
+        dplyr::select(-c(comment, rhizotron, tube_no)) %>% 
+        filter(t==2)
+p_raw_data <- p_raw_data[complete.cases(p_raw_data),]
+p_raw_data$rs <- as.factor(p_raw_data$rs)
+p_raw_data$prop_type <- as.factor(p_raw_data$prop_type)
+p_raw_data$block <- as.factor(p_raw_data$block)
+
+p_raw_data <- p_raw_data %>% 
+        rowwise() %>% 
+        mutate(can_vol_m3 = can_1_cm/100 * can_2_cm/100 * height_cm/100 / 4,
+               di = mean(c(di_1, di_2)),
+               thick = mean(c(thick_1, thick_2)), 
+               color = mean(c(color_1, color_2)),
+               soil_density_kpa = mean(c_across(c('sd_1_kpa', 'sd_2_kpa', 'sd_3_kpa', 'sd_4_kpa')), na.rm=TRUE)) %>% 
+        rename(soil_moisture_vwc = soil_vmc_pct) %>% 
+        dplyr::select(sys_id:prop_type, rs_cm:height_cm, soil_moisture_vwc, can_vol_m3:soil_density_kpa) %>% 
+        dplyr::select(plot_id, block:soil_density_kpa) %>% 
+        group_by(plot_id, block, rs, prop_type) %>% 
+        summarize_all(mean)
+
+p_raw_data = p_raw_data[-15,]
+
+attach(p_raw_data)
+```
+
+## setting the pvalue table
+```{r mixed models, echo=TRUE, message=FALSE, warning=FALSE}
+mm_height <- lmer(height_cm ~ rs*prop_type + (1|block), data=p_raw_data)
+mm_rscm <- lmer(rs_cm ~ rs*prop_type + (1|block), data=p_raw_data)
+mm_sccm <- lmer(sc_cm ~ rs*prop_type + (1|block), data=p_raw_data)
+mm_canvol <- lmer(can_vol_m3 ~ rs*prop_type + (1|block), data=p_raw_data)
+mm_di <- lmer(di ~ rs*prop_type + (1|block), data=p_raw_data)
+mm_thick <- lmer(thick ~ rs*prop_type + (1|block), data=p_raw_data)
+mm_color <- lmer(color ~ rs*prop_type + (1|block), data=p_raw_data)
+mm_soildensity <- lmer(soil_density_kpa ~ rs*prop_type + (1|block), data=p_raw_data)
+
+pvalue_table <- function(model_vec, num_factors){
+        results <- matrix(NA, nrow = num_factors, ncol = length(model_vec))
+        for(i in 1:length(model_vec)){
+                aov1 = anova(model_vec[[i]])
+                p_values <- aov1$`Pr(>F)`
+                results[,i] <- p_values
+        }
+        # print(results)
+        results <- as.data.frame(cbind(rownames(aov1), results))
+        #results <- results %>%
+         #       mutate(across(V2:V8), as.numeric)
+        results
+}
+
+
+ 
+x <- pvalue_table(c(mm_height, mm_rscm, mm_sccm, mm_canvol, mm_di, mm_thick, mm_color, mm_soildensity), 3)
+colnames(x) <- c("factor", "height", "rs_dia", "sc_dia", "can_vol", "di", "thick", "color", "soil_density")
+print(x)
+```
+
+## means extraction for rootstocks
+```{r rootstock extraction, echo=TRUE}
+means_extract <- function(model_name, spec_factor){
+        emm <- emmeans(model_name, spec_factor)
+        print(model_name)
+        print(emm)
+        emm <- as.data.frame(emm) %>% 
+                rowwise() %>% 
+                mutate(CI = upper.CL - emmean) %>% 
+                dplyr::select(1, emmean, CI)
+        emm
+}
+
+rs_height <- means_extract(mm_height, spec_factor = "rs")
+rs_rscm <- means_extract(mm_rscm, spec_factor = "rs")
+rs_sccm <- means_extract(mm_sccm, spec_factor = "rs")
+rs_canvol <- means_extract(mm_canvol, spec_factor = "rs")
+rs_di <- means_extract(mm_di, spec_factor = "rs")
+rs_thick <- means_extract(mm_thick, spec_factor = "rs")
+rs_color <- means_extract(mm_color, spec_factor = "rs")
+rs_soildensity <- means_extract(mm_soildensity, spec_factor = "rs")
+
+
+```http://127.0.0.1:21969/graphics/bed24bcb-a25f-474b-902e-581e0e1ad00c.png
+
+
+## means extraction for each prop method
+```{r propagation method extraction, echo=TRUE}
+method_height <- means_extract(mm_height, spec_factor = "prop_type")
+method_rscm <- means_extract(mm_rscm, spec_factor = "prop_type")
+method_sccm <- means_extract(mm_sccm, spec_factor = "prop_type")
+method_canvol <- means_extract(mm_canvol, spec_factor = "prop_type")
+method_di <- means_extract(mm_di, spec_factor = "prop_type")
+method_thick <- means_extract(mm_thick, spec_factor = "prop_type")
+method_color <- means_extract(mm_color, spec_factor = "prop_type")
+method_soildensity <- means_extract(mm_soildensity, spec_factor = "prop_type")
+```
+
+
+## mean extraction for each interaction
+```{r interaction extraction, echo=TRUE}
+int_height <- means_extract(mm_height, ~ rs:prop_type)
+int_rscm <- means_extract(mm_rscm, ~ rs:prop_type)
+int_sccm <- means_extract(mm_sccm, ~ rs:prop_type)
+int_canvol <- means_extract(mm_canvol, ~ rs:prop_type)
+int_di <- means_extract(mm_di, ~ rs:prop_type)
+int_thick <- means_extract(mm_thick, ~ rs:prop_type)
+int_color <- means_extract(mm_color, ~ rs:prop_type)
+int_soildensity <- means_extract(mm_soildensity, ~ rs:prop_type)
+```

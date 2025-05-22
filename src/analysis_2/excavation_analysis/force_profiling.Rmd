@@ -5,15 +5,37 @@ date: "`r Sys.Date()`"
 output: html_document
 ---
 
-```{r setup, include=FALSE}
+```{r setup library import, include=FALSE}
 library(tidyverse)
 library(data.table)
 library(xts)
 library(GGally)
 library(pls)
+library(ggsignif)
+library(lme4)
+library(lmerTest)
+library(emmeans)
+library(multcomp)
+library(multcompView)
+library(rstatix)
+library(FactoMineR)
+library(factoextra)
+library(XICOR)
+library(smoother)
+library(Metrics)
 ```
 
-```{r force data import}
+# META DATA IMPORTS
+```{r meta data import}
+# Read in metadata
+ft1_meta <- fread('../../../metadata/join_tables/prop_picos_join_table.csv')
+ft2_meta <- fread('../../../metadata/join_tables/prop_adair_join_table.csv')
+```
+
+
+# FORCE DATA IMPORTS
+
+```{r FT2 force_data_import}
 
 # create a list of data frames
 df_list = list()
@@ -21,37 +43,35 @@ df_list = list()
 # processed force profile pathdir
 profile_path = "../../../data/processed/excavation_data/processed_force_profiles/prop_adair/"
 
+# Grab all paths of force profiles
 file_names = dir(profile_path)
+
+# Read all force files into a list
 for(file_name in file_names){
         path = paste(profile_path, file_name, sep='')
         df = fread(file = path)
         df_list[[file_name]] = df
 }
 
-radial_data <- fread('../../../data/processed/radial_img_processing_results/prop_adair_image_results.csv') %>% 
-        filter(str_detect(image_name, '\\d{2}[EW]{1}')) %>% 
-        mutate(row=str_extract(image_name, '\\d{2}[EW]{1}'),
-               tree=str_extract(row, '\\d{2}'),
-               row=str_extract(row, '[EW]{1}'),
-               row=paste('17', row, sep=''),
-               sys_id=paste(row, tree, sep="_")) %>% 
-        dplyr::select(-c(V1, image_name, row, tree)) %>% 
-        dplyr::select(sys_id, everything())
+# Clean up extra variables
+rm(file_name, file_names, profile_path, path, df)
 ```
 
-```{r peak_force_values}
+```{r FT2 peak_force_values}
+# Loop through each data frame in the list
+# And extract the peak forces
 # Create an empty data frame with names and column types
 df_force = data.frame(
-        sys_id = character(0),
-        ang45_ang = numeric(0),
-        ang45_n = numeric(0),
-        peak_ang = numeric(0),
-        peak_n = numeric(0),
-        peak45_ang = numeric(0),
-        peak45_n = numeric(0)
+        sys_id = character(0),        # Root System ID
+        ang45_ang = numeric(0),       # Largest angle <= 45 deg (usually around 44 due to measurement intervals)
+        ang45_n = numeric(0),         # Measured force (N) at 45 deg
+        peak_ang = numeric(0),        # Angle at which the peak force occurred
+        peak_n = numeric(0),          # Peak force measured
+        peak45_ang = numeric(0),      # Angle of the maximum force between 90 and 45 deg
+        peak45_n = numeric(0)         # Peak force (N) from the interval between 90 and 45 deg
 )
 
-# populate the data frame
+# populate the data frame with force data
 for(name in names(df_list)){
         ang45_idx = min(which(df_list[[name]]$ang_y <= 45))
         ang45_row = df_list[[name]][ang45_idx,]
@@ -76,124 +96,1241 @@ for(name in names(df_list)){
                 )
 }
 
+# Clean up extra variables
+rm(name, ang45_idx, ang45_row, peak_idx, peak_row, peak45_idx, peak45_row, df_list)
 ```
 
-```{r radial density maps}
-# radial density maps
-rad_den_path = "../../../data/processed/radial_density_maps/prop_adair/"
-rad_filenames = dir(rad_den_path)
-rad_den_list = list()
+# FT1 AND FT2 RADIAL DENSITY MAPS
 
-for(file_name in rad_filenames){
-        path = paste(rad_den_path, file_name, sep='')
+```{r FT1 and FT2 radial_density_map_filenames}
+# Set the directory of all the radial density csv files
+dens_dir = "../../../data/processed/radial_img_processing_results/"
+
+# Initialize empty filename vectors and fill 
+ft1_rad_filenames <- c()
+ft2_rad_filenames <- c()
+
+for(file_name in dir(dens_dir)){
+        ft1_bool = str_detect(file_name, "^\\d{2}_\\d{2}")
+        ft2_bool = str_detect(file_name, "^\\d{2}[EW]+")
+        
+        if(ft1_bool){
+                ft1_rad_filenames <- c(ft1_rad_filenames, file_name)
+        } else if(ft2_bool){
+                ft2_rad_filenames <- c(ft2_rad_filenames, file_name)
+        }
+}
+
+# Clean up extra variables
+rm(ft1_bool, ft2_bool, file_name)
+```
+
+```{r FT1 radial_density_maps}
+# Start an empty list for radial densities
+ft1_rad_den_list = list()
+
+# Loop over all density files, populate the df and add to list
+for(file_name in ft1_rad_filenames){
+        path = paste(dens_dir, file_name, sep='')
+        rad_den_df = fread(path) %>% 
+                arrange(radius, angle)
+        row = str_extract(file_name, '^\\d{2}')
+        tree = str_extract(file_name, '(?<=^\\d{2}_)\\d{2}')
+        sys_id = paste(row, tree, sep="_")
+        ft1_rad_den_list[[sys_id]] <- rad_den_df
+
+}
+
+# Grab the full radius/angle map
+degrees_radius_map <- rad_den_df[,3:4]
+
+# Set up an empty matrix and label list
+ft1_den_mat <- matrix(nrow=0, ncol=2700)
+ft1_sys_id_labels = names(ft1_rad_den_list)
+
+# Loop over each df in the density list
+# Extract the densities as a vector
+# Row bind to the matrix and append system name to labels vec
+for(idx in names(ft1_rad_den_list)){
+        vec <- as.vector(ft1_rad_den_list[[idx]]$density)
+        ft1_den_mat <- rbind(ft1_den_mat, vec)
+        # ft1_sys_id_labels <- c(ft1_sys_id_labels, idx)
+}
+
+# Bind radial densities to system IDs
+ft1_rad_den_df <- data.frame(sys_id=ft1_sys_id_labels) %>% 
+        cbind(ft1_den_mat)
+colnames(ft1_rad_den_df)[2:2701] <- paste("D", as.character(1:2700), sep=".")
+
+# Clean up extra variables
+rm(ft1_rad_den_list, file_name, path, rad_den_df, row, tree, sys_id, idx, vec, ft1_den_mat, ft1_sys_id_labels)
+```
+
+```{r FT2 radial density maps}
+# Start an empty list for radial densities
+ft2_rad_den_list = list()
+
+# Loop over all density files, populate the df and add to list
+for(file_name in ft2_rad_filenames){
+        path = paste(dens_dir, file_name, sep='')
         rad_den_df = fread(path) %>% 
                 arrange(radius, angle)
         tree_row = str_extract(file_name, '^\\d{2}[EW]+')
         tree = str_extract(tree_row, "^\\d{2}")
         row = paste("17", str_extract(tree_row, "[EW]{1}"), sep="")
         sys_id = paste(row, tree, sep="_")
-        rad_den_list[[sys_id]] <- rad_den_df
-
+        ft2_rad_den_list[[sys_id]] <- rad_den_df
 }
 
+# Grab the full radius/angle map
 degrees_radius_map <- rad_den_df[,3:4]
 
-den_mat <- matrix(nrow=0, ncol=2700)
-sys_id_labels = c()
-for(idx in names(rad_den_list)){
-        
-        vec <- as.vector(rad_den_list[[idx]]$density)
-        den_mat <- rbind(den_mat, vec)
-        sys_id_labels <- c(sys_id_labels, idx)
+# Set up an empty matrix and label list
+ft2_den_mat <- matrix(nrow=0, ncol=2700)
+ft2_sys_id_labels <- names(ft2_rad_den_list)
+
+# Loop over each df in the density list
+# Extract the densities as a vector
+# Row bind to the matrix and append system name to labels vec
+for(idx in names(ft2_rad_den_list)){
+        vec <- as.vector(ft2_rad_den_list[[idx]]$density)
+        ft2_den_mat <- rbind(ft2_den_mat, vec)
 }
-sys_id_labels <- data.frame(sys_id=sys_id_labels)
 
-sys_id_labels <- sys_id_labels %>% 
-        left_join(df_force, by='sys_id')
+ft2_rad_den_df <- data.frame(sys_id=ft2_sys_id_labels) %>% 
+        cbind(ft2_den_mat)
+colnames(ft2_rad_den_df)[2:2701] <- paste("D", as.character(1:2700), sep=".")
 
-# get rows of complete cases
-c_idx <- complete.cases(sys_id_labels)
-density_df <- cbind(sys_id_labels, den_mat)[c_idx,]
-col_names <- c(colnames(density_df[1:7]), paste("D", as.character(1:2700), sep='.'))
-colnames(density_df) <- col_names
-# den_mat <- den_mat[c_idx,]
-# sys_id_labels <- sys_id_labels[c_idx,]
-
-write.csv(density_df, file='../../../data/processed/radial_density_maps/prop_adair_densities.csv')
+# Clean up extra variables
+rm(ft2_rad_den_list, file_name, path, rad_den_df, tree_row, tree, row, sys_id, ft2_sys_id_labels, idx, vec, ft2_den_mat, dens_dir)
+rm(ft1_rad_filenames, ft2_rad_filenames)
 ```
 
+```{r FT2 filter out missing data }
+# For FT2 where we have accurate IMU and force data
+# Remove all rows where proper force calculations couldn't be made due to 
+# Corrupted IMU or force files
 
+density_df <- data.frame(sys_id=ft2_rad_den_df$sys_id) %>% 
+        right_join(df_force, by='sys_id') %>% 
+        left_join(ft2_rad_den_df, by='sys_id')
+
+# Write out density file
+write.csv(density_df, file='../../../data/processed/radial_density_maps/ft2_force_densities.csv')
+```
+
+```{r Shannon Equitability Index}
+
+shannon_eq <- function(df, eps=1e-32){
+        n = ncol(df)
+        row_sums = rowSums(df)
+        props <- as.matrix(sweep(df, 1, row_sums, FUN="/"))
+        props <- ifelse(props==0, eps, props)
+        shannon_eq <- -rowSums(props * log(props)) / log(n) # Calculate the index and then normalize
+        
+        # Return the index
+        shannon_eq
+}
+
+shannon_eq2 <- function(df, eps=1e-32){
+        sys_id <- df$sys_id
+        df_t <- cbind(degrees_radius_map, t(df[, 2:2701]))
+        colnames(df_t)[3:length(colnames(df_t))] <- sys_id
+        means_long <- df_t %>% 
+                pivot_longer(cols=3:length(df_t), names_to = 'sys_id', values_to = 'density') %>% 
+                group_by(sys_id, angle) %>% 
+                summarize(density = mean(density))
+        
+        means_wide <- means_long %>% 
+                pivot_wider(names_from = 'angle', values_from = 'density') %>% 
+                ungroup() %>% 
+                dplyr::select(-sys_id)
+        
+        n = ncol(means_wide)
+        row_sums = rowSums(means_wide)
+        props <- as.matrix(sweep(means_wide, 1, row_sums, FUN="/"))
+        props <- ifelse(props==0, eps, props)
+        shannon_eq <- -rowSums(props * log(props)) / log(n) # Calculate the index and then normalize
+        
+        # Return the index
+        shannon_eq
+        # means_wide
+}
+
+ft1_shannon <- shannon_eq(ft1_rad_den_df[, 2:2701])
+ft2_shannon <- shannon_eq(ft2_rad_den_df[, 2:2701])
+
+# ft1_shannon <- shannon_eq2(ft1_rad_den_df)
+# ft2_shannon <- shannon_eq2(ft2_rad_den_df)
+
+ft1_shannon <- data.frame(
+        sys_id=ft1_rad_den_df$sys_id,
+        sh_eq=ft1_shannon
+        )
+
+ft2_shannon <- data.frame(
+        sys_id=ft2_rad_den_df$sys_id,
+        sh_eq=ft2_shannon
+        )
+```
+
+## Join all FT2 force data to other growth and measurement data
 ```{r join forces to metadata}
-meta <- fread('../../../metadata/join_tables/prop_adair_join_table.csv')
+# Read in growth data
 growth <- fread('../../../data/raw/tree_growth/prop_adair_tree_growth_data.csv') %>% 
         filter(t==2)
-sys_measurment <- fread('../../../data/raw/whole_root_system_measurements/prop_adair_root_system_measurement.csv')
-root_summaries <- fread('../../../data/processed/root_measurements/prop_adair_root_measurement_summary.csv')
+# Read in root system level measurements
+sys_measurement <- fread('../../../data/raw/whole_root_system_measurements/prop_adair_root_system_measurement.csv')
+# root_summaries <- fread('../../../data/processed/root_measurements/prop_adair_root_measurement_summary.csv')
+# Read in root segment summaries
+root_summaries <- fread('../../../data/processed/root_measurements/prop_adair_root_measurement_aggregated.csv')
+# Read in root sysem  depth summaries
+depth_summaries <- fread('../../../data/processed/cleaned_data/prop_adair_system_depths.csv')
+
+# Merge in the force profile results
 force_results <- df_force %>% 
-        left_join(meta, by='sys_id') %>%
+        left_join(ft1_meta, by='sys_id') %>%
         dplyr::select(-comment) %>% 
         left_join(growth, by='sys_id') %>% 
         dplyr::select(-ends_with(".y")) %>% 
-        left_join(sys_measurment, by='sys_id') %>% 
-        # dplyr::select(-ends_with(".x")) %>% 
-        left_join(root_summaries, by='sys_id') %>% 
-        rename('rs'='rs.x', 
-               'prop_type'='prop_type.x')
-        # dplyr::select(-c(ends_with(".y"), ends_with(".x"), V1))
+        left_join(sys_measurement, by='sys_id') %>% 
+        dplyr::select(-ends_with(".x")) %>% 
+        left_join(root_summaries, by='sys_id') %>%
+        dplyr::select(-ends_with(".x")) %>% 
+        dplyr::select(-ends_with(".y")) %>% 
+        left_join(depth_summaries, by='sys_id') %>% 
+        dplyr::select(-ends_with(".x")) %>% 
+        dplyr::select(-ends_with(".y")) %>% 
+        dplyr::select(sys_id, plot_id, row, tree, plot, block, rs:plant_date, measurement_date, t, direction, everything()) %>% 
+        dplyr::select(-c(comment)) %>% 
+        dplyr::filter(sys_id != "17W_28") %>% # Get rid of replacement tree
+        rowwise() %>% 
+        mutate(can_dia_cm = mean(c_across(starts_with("can"))),
+               rs_r_cm = rs_cm / (2 * pi),
+               tcsa = pi * rs_r_cm^2,
+               tcsa_peak_force = peak45_n / tcsa)
+               
+# Subset just the numerical data
+num_data <- force_results %>% 
+        # dplyr::select(-c(1:6, 9:14, ang45_ang, peak_ang, peak45_ang)) %>% 
+        rowwise() %>% 
+        mutate(can_dia_cm = mean(c_across(starts_with("can"))))
 
-num_data <- force_results #%>% 
-        # dplyr::select(-c(sys_id, ang45_ang, peak_ang, peak45_ang, measurement_date, t, direction:block))
-
+force_results$prop_type <- factor(force_results$prop_type, labels=c("Cutting", "Micropropagation", "Seedling"))
 write.csv(force_results, "../../../data/processed/excavation_data/peak_force_tree_measurements.csv")
 
+# Clean up extra variables
+rm(growth, sys_measurement, root_summaries, depth_summaries)
 ```
 
-```{r cor plots}
-# ggpairs(num_data[,3:9])
-ggpairs(num_data[,c(3, 26:30)], aes(color=num_data$rs, alpha=.5), progress = FALSE)+
-        scale_color_viridis_d()+
-        scale_fill_viridis_d()
-ggpairs(num_data[,c(3, 15:19)])
-ggpairs(num_data[,c(3, 20:24)])
-ggpairs(num_data[,c(3, 25:29)])
-ggpairs(num_data[,1:3])
+```{r radial image data import}
+# Pixel area to cm2 area conversion
+# Pixel per 30cm
+SCALE = 1393 # Pixels per cm
+CONV_FACTOR = 30^2 / SCALE^2 # Conversion factor to cm^2
+
+
+# Read in the radial data
+radial_image_data <- fread("../../../data/processed/radial_img_processing_results/prop_adair_image_results.csv") %>% 
+        dplyr::select(-V1) %>% 
+        mutate(convex_hull_area_cm2 = convex_hull_area * CONV_FACTOR,
+               root_area_cm2 = root_area * CONV_FACTOR)
+
+
+# Process FT1 data
+ft1_radial_data <- radial_image_data[145:263,] %>% 
+        separate(image_name, into = c('row', 'tree', NA)) %>% 
+        mutate(sys_id=paste(row, tree, sep="_")) %>% 
+        dplyr::select(-c(row, tree)) %>% 
+        left_join(ft1_meta, by='sys_id') %>% 
+        dplyr::select(sys_id, plot_id:comment, everything()) %>% 
+        dplyr::select(-c(row, tree, plot, plant_date, rhizotron, tube_no, comment)) %>% 
+        full_join(ft1_shannon)
+ft1_radial_data$prop_type <- factor(ft1_radial_data$prop_type, labels=c("Cutting", "Micropropagation", "Seedling"))
+
+# Process FT2 data
+ft2_radial_data <- radial_image_data[1:144,] %>% 
+        separate(image_name, into = c('img_id', NA), sep = "_") %>% 
+        mutate(tree=str_sub(img_id, start=1, end=2),
+               row=paste("17", str_sub(img_id, start=3, end=3), sep = ""),
+               sys_id=paste(row, tree, sep="_")) %>% 
+        dplyr::select(-c(img_id, row, tree)) %>% 
+        left_join(ft2_meta, by='sys_id') %>% 
+        dplyr::select(sys_id, plot_id:comment, everything()) %>% 
+        dplyr::select(-c(row, tree, plot, plant_date, rhizotron, tube_no, comment)) %>% 
+        full_join(ft2_shannon)
+ft2_radial_data$prop_type <- factor(ft2_radial_data$prop_type, labels=c("Cutting", "Micropropagation", "Seedling"))
+
+# Recombine them
+combined_radial_data <- bind_rows(list('ft1'=ft1_radial_data, 'ft2'=ft2_radial_data), .id = 'trial')
+combined_radial_data$trial <- factor(combined_radial_data$trial, labels=c("FT1", "FT2"))
+
+# Clean up extra variables
+rm(SCALE, CONV_FACTOR, ft1_shannon, ft2_shannon, radial_image_data)
 ```
 
 
-```{r peak force plots}
-ang45_p <- ggplot(force_results, aes(x=rs, y=ang45_n, fill=rs))+
+# Radial Data Mixed Modeling
+## Convex Hull
+```{r radial convex hull mixed models}
+# Mixed model
+ft1_convexhull_mm <- lmer(convex_hull_area_cm2 ~ rs * prop_type + (1|block), data=ft1_radial_data)
+ft2_convexhull_mm <- lmer(convex_hull_area_cm2 ~ rs * prop_type + (1|block), data=ft2_radial_data)
+
+# ANOVA
+anova(ft1_convexhull_mm)
+anova(ft2_convexhull_mm)
+
+# EMMEANS
+ft1_convexhull_mm_emm <- emmeans(ft1_convexhull_mm, specs = c(~rs, ~prop_type, ~rs*prop_type))
+ft2_convexhull_mm_emm <- emmeans(ft2_convexhull_mm, specs = c(~rs, ~prop_type, ~rs*prop_type))
+
+# CLD reports
+ft1_rs_cld = cld(ft1_convexhull_mm_emm$`emmeans of rs`, Letters = letters, reversed = T) %>% 
+        arrange(rs)
+ft1_prop_cld = cld(ft1_convexhull_mm_emm$`emmeans of prop_type`, Letters = letters, reversed = T) %>% 
+        arrange(prop_type)
+ft1_rs_prop_cld = cld(ft1_convexhull_mm_emm$`emmeans of rs, prop_type`, Letters = letters, reversed = T) %>% 
+        arrange(prop_type, rs)
+
+
+ft2_rs_cld = cld(ft2_convexhull_mm_emm$`emmeans of rs`, Letters = letters, reversed = T) %>% 
+        arrange(rs)
+ft2_prop_cld = cld(ft2_convexhull_mm_emm$`emmeans of prop_type`, Letters = letters, reversed = T) %>% 
+        arrange(prop_type)
+ft2_rs_prop_cld = cld(ft2_convexhull_mm_emm$`emmeans of rs, prop_type`, Letters = letters, reversed = T) %>% 
+        arrange(prop_type, rs)
+
+ft1_rs_cld
+ft1_prop_cld
+ft1_rs_prop_cld
+
+ft2_rs_cld
+ft2_prop_cld
+ft2_rs_prop_cld
+```
+
+```{r convex hull plots}
+rs_cld = bind_rows(list('FT1'=ft1_rs_cld, 'FT2'=ft2_rs_cld), .id = 'trial')
+prop_cld = bind_rows(list('FT1'=ft1_prop_cld, 'FT2'=ft2_prop_cld), .id = 'trial')
+rs_prop_cld = bind_rows(list('FT1'=ft1_rs_prop_cld, 'FT2'=ft2_rs_prop_cld), .id = 'trial')
+
+
+# Rootstock plot
+rs_convexhull_plot = ggplot(data=combined_radial_data, aes(x=rs, y=convex_hull_area_cm2, fill=rs))+
         geom_boxplot()+
-        facet_wrap(~prop_type)
+        scale_fill_viridis_d(option='D', begin=.2, end=.8)+
+        theme_classic()+
+        labs(x='Rootstock Variety', y='Root System Convex Hull Area cm2')+
+        theme(legend.position = 'None')+
+        geom_label(data=rs_cld, aes(x=rs, y=100, label=trimws(.group)), 
+                  inherit.aes=FALSE,
+                  fill='white')+
+        facet_wrap(~trial)
 
-ang45_p
-
-peak_p <- ggplot(force_results, aes(x=rs, y=peak_n, fill=rs))+
+# Prop Type Plot
+prop_convexhull_plot = ggplot(data=combined_radial_data, aes(x=prop_type, y=convex_hull_area_cm2, fill=prop_type))+
         geom_boxplot()+
-        facet_wrap(~prop_type)
+        scale_fill_viridis_d(option='D', begin=.2, end=.8)+
+        theme_classic()+
+        labs(x='Propagation Method', y='Root System Convex Hull Area cm2')+
+        theme(legend.position = 'None')+
+        geom_label(data=prop_cld, aes(x=prop_type, y=100, label=trimws(.group)), 
+                  inherit.aes=FALSE,
+                  fill='white') +
+        facet_wrap(~trial)
 
-peak_p
+# Interaction Plot
+# rs_prop_convexhull_plot = ggplot(data=combined_radial_data, aes(x=rs, y=convex_hull_area, fill=rs))+
+#         geom_boxplot()+
+#         facet_wrap(~prop_type)+
+#         scale_fill_viridis_d(option='D', begin=.2, end=.8)+
+#         theme_classic()+
+#         labs(x='Rootstock Variety', y='Root System Convex Hull Area cm2')+
+#         theme(legend.position = 'None')+
+#         geom_label(data=rs_prop_cld, aes(x=rs, y=100, label=trimws(.group)),
+#                   inherit.aes=FALSE,
+#                   fill='white')
 
-peak45_p <- ggplot(force_results, aes(x=rs, y=peak45_n, fill=rs))+
+# Convex Hull Area Density plot
+cha_density_plot <- ggplot(combined_radial_data, aes(x=convex_hull_area_cm2, fill=trial))+
+        geom_density(alpha=0.5)+
+        scale_fill_viridis_d(option="D")+
+        facet_wrap(~rs)+
+        labs(x = 'Root System Convex Hull Area cm2', fill='Rootstock')+
+        theme_minimal()+
+        theme(axis.title.y = element_blank(),
+              axis.ticks.y = element_blank(),
+              axis.text.y = element_blank())
+
+
+rs_convexhull_plot
+prop_convexhull_plot
+cha_density_plot
+# rs_prop_convexhull_plot
+```
+
+## Solidity
+```{r radial solidity mixed models}
+# Mixed model
+ft1_solidity_mm <- lmer(solidity ~ rs * prop_type + (1|block), data=ft1_radial_data)
+ft2_solidity_mm <- lmer(solidity ~ rs * prop_type + (1|block), data=ft2_radial_data)
+
+# ANOVA
+anova(ft1_solidity_mm)
+anova(ft2_solidity_mm)
+
+# EMMEANS
+ft1_solidity_mm_emm <- emmeans(ft1_solidity_mm, specs = c(~rs, ~prop_type, ~rs*prop_type))
+ft2_solidity_mm_emm <- emmeans(ft2_solidity_mm, specs = c(~rs, ~prop_type, ~rs*prop_type))
+
+# CLD reports
+ft1_rs_cld = cld(ft1_solidity_mm_emm$`emmeans of rs`, Letters = letters, reversed = T) %>% 
+        arrange(rs)
+ft1_prop_cld = cld(ft1_solidity_mm_emm$`emmeans of prop_type`, Letters = letters, reversed = T) %>% 
+        arrange(prop_type)
+ft1_rs_prop_cld = cld(ft1_solidity_mm_emm$`emmeans of rs, prop_type`, Letters = letters, reversed = T) %>% 
+        arrange(prop_type, rs)
+
+ft2_rs_cld = cld(ft2_solidity_mm_emm$`emmeans of rs`, Letters = letters, reversed = T) %>% 
+        arrange(rs)
+ft2_prop_cld = cld(ft2_solidity_mm_emm$`emmeans of prop_type`, Letters = letters, reversed = T) %>% 
+        arrange(prop_type)
+ft2_rs_prop_cld = cld(ft2_solidity_mm_emm$`emmeans of rs, prop_type`, Letters = letters, reversed = T) %>% 
+        arrange(prop_type, rs)
+
+ft1_rs_cld
+ft1_prop_cld
+ft1_rs_prop_cld
+
+ft2_rs_cld
+ft2_prop_cld
+ft2_rs_prop_cld
+```
+
+```{r solidity plots plots}
+
+rs_cld = bind_rows(list('FT1'=ft1_rs_cld, 'FT2'=ft2_rs_cld), .id = 'trial')
+prop_cld = bind_rows(list('FT1'=ft1_prop_cld, 'FT2'=ft2_prop_cld), .id = 'trial')
+rs_prop_cld = bind_rows(list('FT1'=ft1_rs_prop_cld, 'FT2'=ft2_rs_prop_cld), .id = 'trial')
+
+
+# Rootstock Plot
+rs_solidity_plot = ggplot(data=combined_radial_data, aes(x=rs, y=solidity, fill=rs))+
         geom_boxplot()+
-        facet_wrap(~prop_type)
+        scale_fill_viridis_d(option='D', begin=.2, end=.8)+
+        theme_classic()+
+        labs(x='Rootstock Variety', y='Root System Solidity')+
+        theme(legend.position = 'None')+
+        geom_label(data=rs_cld, aes(x=rs, y=0.05, label=trimws(.group)), 
+                  inherit.aes=FALSE,
+                  fill='white')+
+        facet_wrap(~trial)
 
-peak45_p
+# Prop Type Plot
+prop_solidity_plot = ggplot(data=combined_radial_data, aes(x=prop_type, y=solidity, fill=prop_type))+
+        geom_boxplot()+
+        scale_fill_viridis_d(option='D', begin=.2, end=.8)+
+        theme_classic()+
+        labs(x='Propagation Method', y='Root System Solidity')+
+        theme(legend.position = 'None')+
+        geom_label(data=prop_cld, aes(x=prop_type, y=0.05, label=trimws(.group)), 
+                  inherit.aes=FALSE,
+                  fill='white')+
+        facet_wrap(~trial)
+
+# Interaction Plot
+# rs_prop_solidity_plot = ggplot(data=combined_radial_data, aes(x=rs, y=solidity, fill=rs))+
+#         geom_boxplot()+
+#         facet_wrap(~prop_type)+
+#         scale_fill_viridis_d(option='D', begin=.2, end=.8)+
+#         theme_classic()+
+#         labs(x='Rootstock Variety', y='Root System Solidity')+
+#         theme(legend.position = 'None')+
+#         geom_label(data=rs_prop_cld, aes(x=rs, y=0.05, label=trimws(.group)), 
+#                   inherit.aes=FALSE,
+#                   fill='white')
+
+
+solidity_density_plot <- ggplot(combined_radial_data, aes(x=solidity, fill=rs))+
+        geom_density(alpha=0.5)+
+        scale_fill_viridis_d(option="D")+
+        facet_wrap(~trial)+
+        labs(x = 'Root System Solidity', fill='Rootstock')+
+        theme_minimal()+
+        theme(axis.title.y = element_blank(),
+              axis.ticks.y = element_blank(),
+              axis.text.y = element_blank())
+
+# Calculated xi correlation
+ft1_soli_xi = xicor(ft1_radial_data$convex_hull_area_cm2, ft1_radial_data$solidity)
+ft2_soli_xi = xicor(ft2_radial_data$convex_hull_area_cm2, ft2_radial_data$solidity)
+# Pearson's R
+ft1_soli_cor <- cor(ft1_radial_data$convex_hull_area_cm2, ft1_radial_data$solidity)
+ft2_soli_cor <- cor(ft2_radial_data$convex_hull_area_cm2, ft2_radial_data$solidity)
+
+solidity_cha_facet_labels = data.frame(
+        trial = c('FT1', 'FT2'),
+        x = c(5.4, 5.4),
+        y = c(.75, .75),
+        label = c(
+                paste('xi == ', round(ft1_soli_xi, 4), " * ',' * ~ rho == ", round(ft1_soli_cor, 4)), 
+                paste('xi == ', round(ft2_soli_xi, 4), " * ',' * ~ rho == ", round(ft2_soli_cor, 4)))
+)
+
+solidity_cha_corr_plot <- ggplot(combined_radial_data, aes(x=convex_hull_area_cm2, y=solidity, color=rs))+
+        geom_point(size=3, alpha=.7)+
+        geom_smooth(method = 'gam', se=TRUE, aes(group=1), color='gray30')+
+        geom_text(
+                data=solidity_cha_facet_labels,
+                aes(x=x, y=y, label=label),
+                parse=TRUE,
+                inherit.aes = FALSE, 
+                hjust=-0.6, vjust=3.0, size=4
+        )+
+        scale_color_viridis_d(option='D', begin=.2, end =.9)+
+        labs(y='Solidity',
+             color='Rootstock')+
+        theme_minimal()+
+        theme(axis.text.x = element_text(angle=-30),
+              axis.title.x = element_blank())+
+        facet_wrap(~trial)
+
+rs_solidity_plot
+prop_solidity_plot
+# rs_prop_solidity_plot
+solidity_density_plot
+solidity_cha_corr_plot
+```
+
+## ASI
+```{r radial asi mixed models}
+# Mixed model
+ft1_asi_mm <- lmer(asi ~ rs * prop_type + (1|block), data=ft1_radial_data)
+ft2_asi_mm <- lmer(asi ~ rs * prop_type + (1|block), data=ft2_radial_data)
+
+# ANOVA
+anova(ft1_asi_mm)
+anova(ft2_asi_mm)
+
+# EMMEANS
+ft1_asi_mm_emm <- emmeans(ft1_asi_mm, specs = c(~rs, ~prop_type, ~rs*prop_type))
+ft2_asi_mm_emm <- emmeans(ft2_asi_mm, specs = c(~rs, ~prop_type, ~rs*prop_type))
+
+# CLD Reports
+ft1_rs_cld = cld(ft1_asi_mm_emm$`emmeans of rs`, Letters = letters, reversed = T) %>% 
+        arrange(rs)
+ft1_prop_cld = cld(ft1_asi_mm_emm$`emmeans of prop_type`, Letters = letters, reversed = T) %>% 
+        arrange(prop_type)
+ft1_rs_prop_cld = cld(ft1_asi_mm_emm$`emmeans of rs, prop_type`, Letters = letters, reversed = T) %>% 
+        arrange(prop_type, rs)
+
+ft2_rs_cld = cld(ft2_asi_mm_emm$`emmeans of rs`, Letters = letters, reversed = T) %>% 
+        arrange(rs)
+ft2_prop_cld = cld(ft2_asi_mm_emm$`emmeans of prop_type`, Letters = letters, reversed = T) %>% 
+        arrange(prop_type)
+ft2_rs_prop_cld = cld(ft2_asi_mm_emm$`emmeans of rs, prop_type`, Letters = letters, reversed = T) %>% 
+        arrange(prop_type, rs)
+
+
+ft1_rs_cld
+ft1_prop_cld
+ft1_rs_prop_cld
+
+ft2_rs_cld
+ft2_prop_cld
+ft2_rs_prop_cld
+```
+
+```{r asi plots}
+rs_cld = bind_rows(list('FT1'=ft1_rs_cld, 'FT2'=ft2_rs_cld), .id = 'trial')
+prop_cld = bind_rows(list('FT1'=ft1_prop_cld, 'FT2'=ft2_prop_cld), .id = 'trial')
+rs_prop_cld = bind_rows(list('FT1'=ft1_rs_prop_cld, 'FT2'=ft2_rs_prop_cld), .id = 'trial')
+
+
+rs_asi_plot = ggplot(data=combined_radial_data, aes(x=rs, y=asi, fill=rs))+
+        geom_boxplot()+
+        scale_fill_viridis_d(option='D', begin=.2, end=.8)+
+        theme_classic()+
+        labs(x='Rootstock Variety', y='Root System asi')+
+        theme(legend.position = 'None')+
+        geom_label(data=rs_cld, aes(x=rs, y=0.05, label=trimws(.group)), 
+                  inherit.aes=FALSE,
+                  fill='white')+
+        facet_wrap(~trial)
+
+prop_asi_plot = ggplot(data=combined_radial_data, aes(x=prop_type, y=asi, fill=prop_type))+
+        geom_boxplot()+
+        scale_fill_viridis_d(option='D', begin=.2, end=.8)+
+        theme_classic()+
+        labs(x='Propagation Method', y='Root System asi')+
+        theme(legend.position = 'None')+
+        geom_label(data=prop_cld, aes(x=prop_type, y=0.05, label=trimws(.group)), 
+                  inherit.aes=FALSE,
+                  fill='white')+
+        facet_wrap(~trial)
+
+# rs_prop_asi_plot = ggplot(data=combined_radial_data, aes(x=rs, y=asi, fill=rs))+
+#         geom_boxplot()+
+#         facet_wrap(~prop_type)+
+#         scale_fill_viridis_d(option='D', begin=.2, end=.8)+
+#         theme_classic()+
+#         labs(x='Rootstock Variety', y='Root System ASI')+
+#         theme(legend.position = 'None')+
+#         geom_label(data=rs_prop_cld, aes(x=rs, y=0.05, label=trimws(.group)), 
+#                   inherit.aes=FALSE,
+#                   fill='white')+
+#         facet_wrap(~trial)
+
+# Calculate Xi correlation
+ft1_asi_xi <- xicor(ft1_radial_data$convex_hull_area, ft1_radial_data$asi)
+ft2_asi_xi <- xicor(ft2_radial_data$convex_hull_area, ft2_radial_data$asi)
+# Pearson's R
+ft1_asi_cor <- cor(ft1_radial_data$convex_hull_area, ft1_radial_data$asi)
+ft2_asi_cor <- cor(ft2_radial_data$convex_hull_area, ft2_radial_data$asi)
+
+# Label DF
+asi_cha_facet_labels = data.frame(
+        trial = c('FT1', 'FT2'),
+        x = c(5.4, 5.4),
+        y = c(.6, .6),
+        label = c(
+                paste('xi == ', round(ft1_asi_xi, 4), " * ',' * ~ rho == ", round(ft1_asi_cor, 4)), 
+                paste('xi == ', round(ft2_asi_xi, 4), " * ',' * ~ rho == ", round(ft2_asi_cor, 4))
+        )
+)
+
+# paste('xi == ', round(ft1_xi, 4), 'rho == ', round(ft1_cor, 4)), 
+# paste('xi == ', round(ft2_xi, 4), 'rho == ', round(ft2_cor, 4))
+
+asi_cha_corr_plot <- ggplot(combined_radial_data, aes(x=convex_hull_area_cm2, y=asi, color=rs))+
+        geom_point(size=3, alpha=.7)+
+        geom_smooth(method = 'gam', se=TRUE, aes(group=1), color='gray30')+
+        geom_text(
+                data=asi_cha_facet_labels,
+                aes(x=x, y=y, label=label),
+                parse=TRUE,
+                inherit.aes = FALSE, 
+                hjust=-0.2, vjust=3.0, size=4
+        )+
+        scale_color_viridis_d(option='D', begin=.2, end =.9)+
+        labs(x='Convex Hull Area (cm2)',
+             y='ASI',
+             color='Rootstock')+
+        theme_minimal()+
+        theme(axis.text.x = element_text(angle=-30),)+
+        facet_wrap(~trial)
+
+
+
+rs_asi_plot
+prop_asi_plot
+asi_cha_corr_plot
+# rs_prop_asi_plot
+```
+
+## Shannon Equitability Index
+```{r radial shannon eq mixed models}
+# Mixed model
+ft1_sh_mm <- lmer(sh_eq ~ rs * prop_type + (1|block), data=ft1_radial_data)
+ft2_sh_mm <- lmer(sh_eq ~ rs * prop_type + (1|block), data=ft2_radial_data)
+
+# ANOVA
+anova(ft1_sh_mm)
+anova(ft2_sh_mm)
+
+# EMMEANS
+ft1_sh_mm_emm <- emmeans(ft1_sh_mm, specs = c(~rs, ~prop_type, ~rs*prop_type))
+ft2_sh_mm_emm <- emmeans(ft2_sh_mm, specs = c(~rs, ~prop_type, ~rs*prop_type))
+
+# CLD Reports
+ft1_rs_cld = cld(ft1_sh_mm_emm$`emmeans of rs`, Letters = letters, reversed = T) %>% 
+        arrange(rs)
+ft1_prop_cld = cld(ft1_sh_mm_emm$`emmeans of prop_type`, Letters = letters, reversed = T) %>% 
+        arrange(prop_type)
+ft1_rs_prop_cld = cld(ft1_sh_mm_emm$`emmeans of rs, prop_type`, Letters = letters, reversed = T) %>% 
+        arrange(prop_type, rs)
+
+ft2_rs_cld = cld(ft2_sh_mm_emm$`emmeans of rs`, Letters = letters, reversed = T) %>% 
+        arrange(rs)
+ft2_prop_cld = cld(ft2_sh_mm_emm$`emmeans of prop_type`, Letters = letters, reversed = T) %>% 
+        arrange(prop_type)
+ft2_rs_prop_cld = cld(ft2_sh_mm_emm$`emmeans of rs, prop_type`, Letters = letters, reversed = T) %>% 
+        arrange(prop_type, rs)
+
+
+ft1_rs_cld
+ft1_prop_cld
+ft1_rs_prop_cld
+
+ft2_rs_cld
+ft2_prop_cld
+ft2_rs_prop_cld
+```
+
+```{r shannon eq plots}
+rs_cld = bind_rows(list('FT1'=ft1_rs_cld, 'FT2'=ft2_rs_cld), .id = 'trial')
+prop_cld = bind_rows(list('FT1'=ft1_prop_cld, 'FT2'=ft2_prop_cld), .id = 'trial')
+rs_prop_cld = bind_rows(list('FT1'=ft1_rs_prop_cld, 'FT2'=ft2_rs_prop_cld), .id = 'trial')
+
+
+rs_sh_plot = ggplot(data=combined_radial_data, aes(x=rs, y=sh_eq, fill=rs))+
+        geom_boxplot()+
+        scale_fill_viridis_d(option='D', begin=.2, end=.8)+
+        theme_classic()+
+        labs(x='Rootstock Variety', y='Root System SEI')+
+        theme(legend.position = 'None')+
+        geom_label(data=rs_cld, aes(x=rs, y=0.65, label=trimws(.group)), 
+                  inherit.aes=FALSE,
+                  fill='white')+
+        facet_wrap(~trial)
+
+prop_sh_plot = ggplot(data=combined_radial_data, aes(x=prop_type, y=sh_eq, fill=prop_type))+
+        geom_boxplot()+
+        scale_fill_viridis_d(option='D', begin=.2, end=.8)+
+        theme_classic()+
+        labs(x='Propagation Method', y='Root System SEI')+
+        theme(legend.position = 'None')+
+        geom_label(data=prop_cld, aes(x=prop_type, y=0.65, label=trimws(.group)), 
+                  inherit.aes=FALSE,
+                  fill='white')+
+        facet_wrap(~trial)
+
+# rs_prop_sh_plot = ggplot(data=combined_radial_data, aes(x=rs, y=sh_eq, fill=rs))+
+#         geom_boxplot()+
+#         facet_wrap(~prop_type)+
+#         scale_fill_viridis_d(option='D', begin=.2, end=.8)+
+#         theme_classic()+
+#         labs(x='Rootstock Variety', y='Root System sh_eq')+
+#         theme(legend.position = 'None')+
+#         geom_label(data=rs_prop_cld, aes(x=rs, y=0.05, label=trimws(.group)), 
+#                   inherit.aes=FALSE,
+#                   fill='white')+
+#         facet_wrap(~trial)
+
+# Calculate Xi correlation
+ft1_sh_xi <- xicor(ft1_radial_data$convex_hull_area_cm2, ft1_radial_data$sh_eq)
+ft2_sh_xi <- xicor(ft2_radial_data$convex_hull_area_cm2, ft2_radial_data$sh_eq)
+# Pearson's R
+ft1_sh_cor <- cor(ft1_radial_data$convex_hull_area_cm2, ft1_radial_data$sh_eq)
+ft2_sh_cor <- cor(ft2_radial_data$convex_hull_area_cm2, ft2_radial_data$sh_eq)
+
+# Label DF
+sh_cha_facet_labels = data.frame(
+        trial = c('FT1', 'FT2'),
+        x = c(1000, 1000),
+        y = c(.94, .94),
+        label = c(
+                paste('xi == ', round(ft1_sh_xi, 4), " * ',' * ~ rho == ", round(ft1_sh_cor, 4)), 
+                paste('xi == ', round(ft2_sh_xi, 4), " * ',' * ~ rho == ", round(ft2_sh_cor, 4))
+        )
+)
+
+# paste('xi == ', round(ft1_xi, 4), 'rho == ', round(ft1_cor, 4)), 
+# paste('xi == ', round(ft2_xi, 4), 'rho == ', round(ft2_cor, 4))
+
+sh_cha_corr_plot <- ggplot(combined_radial_data, aes(x=convex_hull_area_cm2, y=sh_eq, color=rs))+
+        geom_point(size=3, alpha=.7)+
+        geom_smooth(method = 'gam', se=TRUE, aes(group=1), color='gray30')+
+        geom_text(
+                data=sh_cha_facet_labels,
+                aes(x=x, y=y, label=label),
+                parse=TRUE,
+                inherit.aes = FALSE, 
+                # hjust=-0.2, vjust=3.0, size=4
+        )+
+        scale_color_viridis_d(option='D', begin=.2, end =.9)+
+        labs(x='Convex Hull Area (cm2)',
+             y='SEI',
+             color='Rootstock')+
+        theme_minimal()+
+        theme(axis.text.x = element_text(angle=-30),)+
+        facet_wrap(~trial)
+
+
+
+rs_sh_plot
+prop_sh_plot
+sh_cha_corr_plot
+# rs_prop_asi_plot
+```
+
+## Clean up Mixed Model and Graph Objects
+```{r mm object cleanup}
+rm(ft1_soli_cor, ft1_soli_xi, ft2_soli_cor, ft2_soli_xi)
+rm(ft1_asi_cor, ft1_asi_xi, ft2_asi_cor, ft2_asi_xi)
+rm(ft1_sh_cor, ft1_sh_xi, ft2_sh_cor, ft2_sh_xi)
+rm(ft1_convexhull_mm, ft1_convexhull_mm_emm, ft2_convexhull_mm, ft2_convexhull_mm_emm)
+rm(ft1_solidity_mm, ft1_solidity_mm_emm, ft2_solidity_mm, ft2_solidity_mm_emm)
+rm(ft1_asi_mm, ft1_asi_mm_emm, ft2_asi_mm, ft2_asi_mm_emm)
+rm(ft1_sh_mm, ft1_sh_mm_emm, ft2_sh_mm, ft2_sh_mm_emm)
+rm(ft1_rs_cld, ft1_prop_cld, ft1_rs_prop_cld, ft2_rs_cld, ft2_prop_cld, ft2_rs_prop_cld, rs_cld, prop_cld, rs_prop_cld)
+rm(asi_cha_facet_labels, solidity_cha_facet_labels, sh_cha_facet_labels)
+```
+
+
+
+```{r Growth Data Correlation Analysis}
+# Correlation plots for growth data
+# Subset specific growth columns
+subset_columns = c(
+        "peak45_n",
+        "rs_cm",
+        "sc_cm",
+        "height_cm",
+        "can_dia_cm"
+)
+
+ggpairs_df = force_results[subset_columns]
+# Rename columns
+colnames(ggpairs_df) <- c("Peak Force (N)", "RS Circ. (cm)", "SC Circ. (cm)", "Tree Height (cm)", "Canopy Dia. (cm)")
+# Correlation plot
+growth_cor_graph = ggpairs(
+        ggpairs_df, 
+        lower = list(continuous = wrap("points", size=2, alpha=0.5, color="navy"), combo = "dot_no_facet"),
+        diag = list(continuous = "densityDiag")
+        # mapping = ggplot2::aes(color=force_results$rs)
+) +
+        theme_minimal()+
+        theme(strip.text = element_text(size=8))+
+        theme(axis.text.x = element_text(angle = 45))+
+        theme()
+
+growth_cor_graph
+
+growth_cor_mat <- cor_mat(ggpairs_df)
+growth_cor_pmat <- cor_pmat(ggpairs_df)
+
+growth_cor_matrix <- matrix(data=NA, nrow=nrow(growth_cor_mat), ncol=ncol(growth_cor_mat)-1)
+rownames(growth_cor_matrix) = growth_cor_mat$rowname
+colnames(growth_cor_matrix) = colnames(growth_cor_mat)[-1]
+
+
+for (i in 1:nrow(growth_cor_mat)) {
+        for (j in 2:ncol(growth_cor_mat)) {
+                corr = growth_cor_mat[i,j]
+                pvalue = growth_cor_pmat[i,j]
+                if ((pvalue > 0.05) | (corr == 1)) {
+                        signif = ""
+                } else if (pvalue > 0.01) {
+                        signif = "*"
+                } else if (pvalue > 0.001){
+                        signif = "**"
+                } else {
+                        signif = "***"
+                }
+                entry = trimws(paste(corr, signif, sep=" "))
+                growth_cor_matrix[i,j-1] = entry
+        }
+}
+growth_cor_matrix
+
+write.csv(growth_cor_matrix, "growth_correlation_matrix.csv")
+
+# Cleanup
+rm(subset_columns, ggpairs_df, growth_cor_mat, growth_cor_pmat, growth_cor_matrix)
+```
+
+```{r Root Data Correlation Analysis}
+# Correlation plots for root data
+subset_columns = c(
+        "peak45_n",
+        "n_seg",
+        "seg_b_dia",
+        "lateral_e",
+        "curved",
+        "root_bound",
+        "broken"
+)
+
+ggpairs_df = force_results[subset_columns] %>% 
+        mutate(across(c(lateral_e, curved, root_bound, broken), ~ .x / n_seg)) %>% 
+        select(-n_seg)
+# Rename columns
+colnames(ggpairs_df) <- c("Peak Force (N)", "TCSA", "Num. Root Seg.", "Basal Dia (mm)", "Lat. Em.", "Root Bound", "Broken")
+# Correlation plot
+root_cor_graph = ggpairs(
+        ggpairs_df, 
+        # upper = list(continuous = wrap("density"), combo = "box_no_facet"),
+        lower = list(continuous = wrap("points", size=2, alpha=0.5, color="navy"), combo = "dot_no_facet"),
+        diag = list(continuous = "densityDiag")
+        # mapping = ggplot2::aes(color=force_results$rs)
+) +
+        theme_minimal()+
+        theme(strip.text = element_text(size=8))+
+        theme(axis.text.x = element_text(angle = 45))
+
+root_cor_graph
+
+root_cor_mat <- cor_mat(ggpairs_df)
+root_cor_pmat <- cor_pmat(ggpairs_df)
+
+root_cor_matrix <- matrix(data=NA, nrow=nrow(root_cor_mat), ncol=ncol(root_cor_mat)-1)
+rownames(root_cor_matrix) = root_cor_mat$rowname
+colnames(root_cor_matrix) = colnames(root_cor_mat)[-1]
+
+for (i in 1:nrow(root_cor_mat)) {
+        for (j in 2:ncol(root_cor_mat)) {
+                corr = root_cor_mat[i,j]
+                pvalue = root_cor_pmat[i,j]
+                if ((pvalue > 0.05) | (corr == 1)) {
+                        signif = ""
+                } else if (pvalue > 0.01) {
+                        signif = "*"
+                } else if (pvalue > 0.001){
+                        signif = "**"
+                } else {
+                        signif = "***"
+                }
+                entry = trimws(paste(corr, signif, sep=" "))
+                root_cor_matrix[i,j-1] = entry
+        }
+}
+root_cor_matrix
+
+write.csv(root_cor_matrix, "root_correlation_matrix.csv")
+
+# Cleanup
+rm(subset_columns, ggpairs_df, root_cor_mat, root_cor_pmat, root_cor_matrix)
+```
+
+```{r Radial image data Correlation Analysis}
+ggpairs_df = ft2_radial_data %>% 
+        right_join(df_force, by='sys_id')
+
+subset_columns = c(
+        "peak45_n",
+        "convex_hull_area",
+        "root_area",
+        "solidity",
+        "asi",
+        "sh_eq"
+)
+
+ggpairs_df = ggpairs_df[subset_columns]
+colnames(ggpairs_df) <- c("Peak Force (N)", "Convex Hull Area", "Root Area", "Solidity", "ASI", "SEI")
+
+radial_cor_graph = ggpairs(
+        ggpairs_df,
+        # upper = list(continuous = wrap("density"), combo = "box_no_facet"),
+        lower = list(continuous = wrap("points", size=2, alpha=0.5, color="navy"), combo = "dot_no_facet"),
+        diag = list(continuous = "densityDiag"),
+        # mapping = ggplot2::aes(color=force_results$rs)
+) +
+        theme_minimal()+
+        theme(strip.text = element_text(size=8))+
+        theme(axis.text.x = element_text(angle = 45))+
+        theme()
+
+radial_cor_graph
+
+radial_cor_mat <- cor_mat(ggpairs_df)
+radial_cor_pmat <- cor_pmat(ggpairs_df)
+
+radial_cor_matrix <- matrix(data=NA, nrow=nrow(radial_cor_mat), ncol=ncol(radial_cor_mat)-1)
+rownames(radial_cor_matrix) = radial_cor_mat$rowname
+colnames(radial_cor_matrix) = colnames(radial_cor_mat)[-1]
+
+
+for (i in 1:nrow(radial_cor_mat)) {
+        for (j in 2:ncol(radial_cor_mat)) {
+                corr = radial_cor_mat[i,j]
+                pvalue = radial_cor_pmat[i,j]
+                if ((pvalue > 0.05) | (corr == 1)) {
+                        signif = ""
+                } else if (pvalue > 0.01) {
+                        signif = "*"
+                } else if (pvalue > 0.001){
+                        signif = "**"
+                } else {
+                        signif = "***"
+                }
+                entry = trimws(paste(corr, signif, sep=" "))
+                radial_cor_matrix[i,j-1] = entry
+        }
+}
+radial_cor_matrix
+
+write.csv(radial_cor_matrix, "radial_correlation_matrix.csv")
+
+# Cleanup
+rm(subset_columns, ggpairs_df, radial_cor_mat, radial_cor_pmat, radial_cor_matrix)
+```
+
+
+```{r Peak45_n force mixed models}
+peak_mm <- lmer(peak45_n ~ rs * prop_type + (1|block), data=force_results)
+anova(peak_mm)
+peak_mm_emm <- emmeans(peak_mm, specs = c(~rs, ~prop_type, ~rs*prop_type))
+peak_mm_emm
+
+rs_cld = cld(peak_mm_emm$`emmeans of rs`, Letters = letters, reversed = T) %>% 
+        arrange(rs)
+
+prop_cld = cld(peak_mm_emm$`emmeans of prop_type`, Letters = letters, reversed = T) %>% 
+        arrange(prop_type)
+
+rs_prop_cld = cld(peak_mm_emm$`emmeans of rs, prop_type`, Letters = letters, reversed = T) %>% 
+        arrange(prop_type, rs)
+
+rs_force_plot = ggplot(data=force_results, aes(x=rs, y=peak45_n, fill=rs))+
+        geom_boxplot()+
+        scale_fill_viridis_d(option='D', begin=.2, end=.8)+
+        theme_classic()+
+        labs(x='Rootstock Variety', y='Peak Force (N)')+
+        theme(legend.position = 'None')+
+        geom_label(data=rs_cld, aes(x=rs, y=100, label=trimws(.group)), 
+                  inherit.aes=FALSE,
+                  fill='white')
+
+prop_force_plot = ggplot(data=force_results, aes(x=prop_type, y=peak45_n, fill=prop_type))+
+        geom_boxplot()+
+        scale_fill_viridis_d(option='D', begin=.2, end=.8)+
+        theme_classic()+
+        labs(x='Propagation Method', y='Peak Force (N)')+
+        theme(legend.position = 'None')+
+        geom_label(data=prop_cld, aes(x=prop_type, y=100, label=trimws(.group)), 
+                  inherit.aes=FALSE,
+                  fill='white')
+
+rs_prop_force_plot = ggplot(data=force_results, aes(x=rs, y=peak45_n, fill=rs))+
+        geom_boxplot()+
+        facet_wrap(~prop_type)+
+        scale_fill_viridis_d(option='D', begin=.2, end=.8)+
+        theme_classic()+
+        labs(x='Rootstock Variety', y='Peak Force (N)')+
+        theme(legend.position = 'None')+
+        geom_label(data=rs_prop_cld, aes(x=rs, y=100, label=trimws(.group)), 
+                  inherit.aes=FALSE,
+                  fill='white')
+
+prop_density_plot = ggplot(force_results, aes(x=peak45_n, fill=prop_type))+
+        geom_density(alpha=0.5)+
+        theme_classic()+
+        scale_fill_viridis_d(option='D', begin=.2, end=.8)+
+        facet_wrap(~rs)+
+        labs(x="Standardized Force (N)", fill="Prop. Type")+
+        theme(axis.text.y = element_blank(),
+              axis.title.y = element_blank(),
+              axis.ticks.y = element_blank())
+prop_density_plot
+
+rs_cld
+prop_cld
+rs_prop_cld
+
+
+rs_force_plot
+prop_force_plot
+rs_prop_force_plot
+```
+
+```{r TCSA normalized force mixed models}
+tcsa_mm <- lmer(tcsa_peak_force ~ rs * prop_type + (1|block), data=force_results)
+anova(tcsa_mm)
+tcsa_mm_emm <- emmeans(tcsa_mm, specs = c(~rs, ~prop_type, ~rs*prop_type))
+tcsa_mm_emm
+
+rs_cld = cld(tcsa_mm_emm$`emmeans of rs`, Letters = letters, reversed = T) %>% 
+        arrange(rs)
+
+prop_cld = cld(tcsa_mm_emm$`emmeans of prop_type`, Letters = letters, reversed = T) %>% 
+        arrange(prop_type)
+
+rs_prop_cld = cld(tcsa_mm_emm$`emmeans of rs, prop_type`, Letters = letters, reversed = T) %>% 
+        arrange(prop_type, rs)
+
+rs_force_plot = ggplot(data=force_results, aes(x=rs, y=tcsa_peak_force, fill=rs))+
+        geom_boxplot()+
+        scale_fill_viridis_d(option='D', begin=.2, end=.8)+
+        theme_classic()+
+        labs(x='Rootstock Variety', y='Peak Force (N) / TCSA')+
+        theme(legend.position = 'None')+
+        geom_label(data=rs_cld, aes(x=rs, y=100, label=trimws(.group)), 
+                  inherit.aes=FALSE,
+                  fill='white')
+
+prop_force_plot = ggplot(data=force_results, aes(x=prop_type, y=tcsa_peak_force, fill=prop_type))+
+        geom_boxplot()+
+        scale_fill_viridis_d(option='D', begin=.2, end=.8)+
+        theme_classic()+
+        labs(x='Propagation Method', y='Peak Force (N) / TCSA')+
+        theme(legend.position = 'None')+
+        geom_label(data=prop_cld, aes(x=prop_type, y=100, label=trimws(.group)), 
+                  inherit.aes=FALSE,
+                  fill='white')
+
+rs_prop_force_plot = ggplot(data=force_results, aes(x=rs, y=tcsa_peak_force, fill=rs))+
+        geom_boxplot()+
+        facet_wrap(~prop_type)+
+        scale_fill_viridis_d(option='D', begin=.2, end=.8)+
+        theme_classic()+
+        labs(x='Rootstock Variety', y='Peak Force (N) / TCSA')+
+        theme(legend.position = 'None')+
+        geom_label(data=rs_prop_cld, aes(x=rs, y=100, label=trimws(.group)), 
+                  inherit.aes=FALSE,
+                  fill='white')
+
+prop_density_plot = ggplot(force_results, aes(x=peak45_n, fill=prop_type))+
+        geom_density(alpha=0.5)+
+        theme_classic()+
+        scale_fill_viridis_d(option='D', begin=.2, end=.8)+
+        facet_wrap(~rs)+
+        labs(x="Standardized Force (N)", fill="Prop. Type")+
+        theme(axis.text.y = element_blank(),
+              axis.title.y = element_blank(),
+              axis.ticks.y = element_blank())
+prop_density_plot
+
+rs_cld
+prop_cld
+rs_prop_cld
+
+
+rs_force_plot
+prop_force_plot
+rs_prop_force_plot
 ```
 
 ```{r plsr modeling}
-D_scaled <- as.data.frame(scale(density_df[,8:2007])) %>% 
-        mutate(peak_n = density_df$peak45_n) %>% 
-        select(peak_n, everything())
-pls_formula <- formula(D_scaled)
-peak_pls <- plsr(pls_formula, ncomp = 100, data = density_df, validation="LOO")
-plot(scores(peak_pls))
+library(Metrics)
 
-plot(peak_pls)
-plot(peak_pls, ncomp = 1 ,plottype = "coef")
-plot(peak_pls, plottype = "correlation")
-plot(explvar(peak_pls))
-plot(cumsum(explvar(peak_pls)))
+# Grab the quadrant density information and the growth/root information and append
+plsr_data = num_data %>%
+        select(-(2:20), -load_depth_px, -(h_e:can_dia_cm)) %>% # Drop unnecessary columns
+        left_join( # Grab the CHA, solidity, and ASI
+                ft2_radial_data %>% 
+                        dplyr::select(sys_id, convex_hull_area, solidity, asi)
+                , 'sys_id'
+        ) %>% 
+        right_join(density_df, by = 'sys_id') %>% # Pull in the density measurements at the end
+        select(-c(sys_id, seg_angle, ang45_ang:peak45_ang)) %>%
+        select(peak45_n, everything())
+plsr_data = plsr_data[-136,]
+
+
+# plsr_data <- density_df %>% 
+#         dplyr::select(7:2707)
+
+# Grab target y
+y = plsr_data$peak45_n
+
+# Scale all independents (minus the target) and then add the target back in
+plsr_data = as.data.frame(scale(plsr_data[, -1])) %>% 
+        mutate(peak_n = y) %>% 
+        select(peak_n, everything())
+
+# Set up the PLSR formula as col1 ~ everything()
+pls_formula <- formula(plsr_data)
+
+# Get an empty vector to hold the RMSE scores
+rmse_scores = c()
+
+# Loop through different numbers of components
+# for (i in 1:30) {
+#         print(i)
+#         peak_pls <- plsr(pls_formula, ncomp = i, data = plsr_data, validation="LOO")
+#         preds = predict(peak_pls, plsr_data[, -1])
+#         error = rmse(y, preds)
+#         rmse_scores = c(rmse_scores, error)
+#         print(rmse_scores)
+# }
+
+peak_pls <- plsr(pls_formula, ncomp=10, data=plsr_data, validation="LOO")
+coef_df <- as.data.frame(coef(peak_pls, ncomp=1))
+colnames(coef_df) <- c('coef')
+coef_df
+
+dens_coef_df <- as.data.frame(coef_df[37:nrow(coef_df),])
+colnames(dens_coef_df) <- c('coef')
+
+# plot(rmse_scores)
+# plot(peak_pls)
+# plot(peak_pls, ncomp = 1,plottype = "coef")
+# plot(peak_pls, plottype = "correlation")
+# plot(explvar(peak_pls))
+# plot(cumsum(explvar(peak_pls)))
+
+raw_coef_plot <- ggplot(dens_coef_df, aes(x=1:nrow(dens_coef_df), y = coef))+
+        geom_line()+
+        labs(title='Raw PLS Coefficients', x='Index')
+
+raw_coef_plot
+
+# Fit a baseline spline
+y <- dens_coef_df$coef # y = coef
+x <- seq_along(y) # x = index
+spline_fit <- smooth.spline(x, y, df=8)
+
+# Set the baseline and mutate dens_coef_df
+baseline <- predict(spline_fit, x)$y # Use the spline to predict all 2700 indices
+dens_coef_df <- dens_coef_df %>% 
+        mutate(baseline = baseline, 
+               centered_coef = coef - baseline,
+               smoothed_coef = smth.gaussian(centered_coef, window = 15),
+               slice = rep(1:90, times=30)*4,
+               radius = rep(1:30, each=90))
+
+baseline_coef_plot <- ggplot(dens_coef_df, aes(x=1:nrow(dens_coef_df), y=coef))+
+        geom_line()+
+        geom_line(y=baseline, color='navyblue', lwd=3)+
+        labs(title='Spline PLS Coefficients', x='Index')
+
+baseline_coef_plot
+
+centered_coef_plot <- ggplot(dens_coef_df, aes(x=1:nrow(dens_coef_df), y=centered_coef))+
+        geom_line()+
+        labs(title='Centered PLS Coefficients', x='Index')
+
+centered_coef_plot
+
+smoothed_coef_plot <- ggplot(dens_coef_df[271:nrow(dens_coef_df),], aes(x=271:nrow(dens_coef_df), y=smoothed_coef))+
+        geom_line()+
+        # geom_vline(xintercept =seq(from=90, to = 2700, by=90), color = 'red')+
+        labs(title='Gaussian Smoothed PLS Coefficients', x='Index')
+
+smoothed_coef_plot
+
+aggregated_coef_plot <- ggplot(dens_coef_df[271:nrow(dens_coef_df),], aes(x=slice, y=smoothed_coef))+
+        geom_point(color='navyblue', alpha=0.5)+
+        geom_vline(xintercept = c(90, 180, 270))+
+        labs(title='Folded PLS Coefficients', x='Slice')
+
+aggregated_coef_plot
+
+
+sub_coef <- dens_coef_df$smoothed_coef[271:(2700-90)]
+
+
+# Fast Fourier Transform
+coef_fft <- fft(sub_coef)
+freqs <- seq(0, length(sub_coef)-1) / length(sub_coef)
+power_spectrum <- Mod(coef_fft)^2  # Magnitude squared
+plot(freqs, power_spectrum, type="h", main="FFT Power Spectrum", xlab="Frequency", ylab="Power")
+idx = which(freqs <= 0.5)
+plot(freqs[idx], power_spectrum[idx], type='h')
+fft_df <- data.frame(freq=freqs[idx], spec=power_spectrum[idx])
+ordered_df <- fft_df[order(-fft_df$spec),]
+# View(ordered_df)
+ordered_df$interval = 1/ordered_df$freq * 4
+print(head(ordered_df, 10))
+
+
+# p = periodogram(sub_coef)
+# dd = data.frame(freq=p$freq, spec=p$spec)
+# order = dd[order(-dd$spec),]
+# top2 = head(order, 10)
+# time = 1/top2$freq
+# time*4
 ```
+
+```{r}
+ggplot(dens_coef_df[91:(2700-90),], aes(x=slice, y=radius, fill=smoothed_coef))+
+        geom_tile()+
+        coord_polar(start = pi)
+
+```
+
 
 ```{r}
 pls_data <- density_df[, 7:2707]
@@ -203,9 +1340,9 @@ pls_formula <- formula(pls_data)
 
 scaled_data <- as.data.frame(scaled_data)
 
-pls_mod <- plsr(formula=pls_formula, ncomp = 50, data=scaled_data, validation="LOO", )
+pls_mod <- plsr(formula=pls_formula, ncomp = 50, data=pls_data, validation="LOO", )
 
-cumsum(explvar(pls_mod))
+plot(cumsum(explvar(pls_mod)))
 ```
 
 
@@ -257,7 +1394,7 @@ coef_plot
 
 
 ```{r}
-ggplot(coef_df, aes(angle, y=coef))+
+ggplot(coef_df[1:1000,], aes(angle, y=coef))+
         geom_point(aes(color=area))+
         geom_smooth(aes(shape=NULL))+
         geom_vline(xintercept = c(90, 180, 270))+
@@ -268,7 +1405,7 @@ ggplot(coef_df, aes(angle, y=coef))+
 
 ```{r}
 radial_data <- radial_data %>% 
-        right_join(meta, by='sys_id')
+        right_join(ft1_meta, by='sys_id')
 ```
 
 ```{r}
@@ -281,4 +1418,72 @@ mm1 <- lmer(peak45_n ~ rs * prop_type + solidity*variance_PC1 + (1|block), data=
 ```
 
 
+```{r symmetry}
+radial_data <- fread("../../../data/processed/radial_img_processing_results/prop_adair_image_results.csv")
+radial_data <- radial_data[1:144,] %>% 
+        separate(image_name, into=c("sys_id", NA), sep='_') %>% 
+        mutate(row = paste(17, str_sub(sys_id, 3,3), sep=''),
+               tree = str_sub(sys_id, 1, 2),
+               sys_id = paste(row, tree, sep="_")) %>% 
+        left_join(ft1_meta, by="sys_id")
+
+```
+
+
+```{r}
+mm_offset <- lmer(center_offset ~ rs * prop_type + (1|block), data = radial_data)
+mm_pc <- lmer(variance_PC1 ~ rs * prop_type + (1|block), data = radial_data)
+anova(mm_pc)
+
+em_pc = emmeans(mm_pc, ~ rs)
+cld_pc <- cld(em_pc, Letters = letters, reversed=TRUE)
+cld_pc
+```
+
+```{r}
+moving_average <- function(x, n) {
+  if (length(x) < n) {
+    stop("Window size is larger than the vector length.")
+  }
+  
+  stats::filter(x, rep(1/n, n), sides = 2)
+}
+
+
+sub_smoothed = ma_smoothed[91:(2700-90)]
+mean_smoothed = mean(sub_smoothed)
+centered_smoothed = sub_smoothed-mean_smoothed
+
+coef_fft <- fft(pls_coef)
+freqs <- seq(0, length(pls_coef)-1) / length(pls_coef)
+power_spectrum <- Mod(coef_fft)^2  # Magnitude squared
+plot(freqs, power_spectrum, type="h", main="FFT Power Spectrum", xlab="Frequency", ylab="Power")
+
+p = periodogram(centered_smoothed)
+dd = data.frame(freq=p$freq, spec=p$spec)
+order = dd[order(-dd$spec),]
+top2 = head(order, 10)
+time = 1/top2$freq
+time*4
+```
+
+```{r}
+library(smoother)
+smoothed = data.frame('coef'=radial_coef, 
+                      'smoothed'=smth.gaussian(radial_coef, window = 25, alpha = 1),
+                      'baseline' = smth.gaussian(radial_coef, window = 90, alpha = 1)) %>% 
+        mutate(baseline_sub = smoothed-baseline,
+               intervals = rep(1:30, each=90),
+               slices = rep(1:90, times=30)*4
+               )
+
+vlines = seq(from=0, to = 2700, by=90)
+
+ggplot(smoothed, aes(x=1:2700, y=baseline_sub))+
+        geom_line()+
+        geom_vline(xintercept = vlines, color = "red")
+
+ggplot(smoothed, aes(slices, intervals, fill=baseline_sub))+
+        geom_tile()
+```
 
