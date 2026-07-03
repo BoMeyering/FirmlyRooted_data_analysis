@@ -1,0 +1,46 @@
+<mxfile host="app.diagrams.net" modified="2024-01-05T23:03:10.021Z" agent="Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:121.0) Gecko/20100101 Firefox/121.0" etag="JE3JshH1pMJyze0XsDRu" version="22.1.17" type="google">
+  <diagram name="Page-1" id="IS4VvSSmULi0nY4VqlpZ">
+    <mxGraphModel grid="1" page="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" pageScale="1" pageWidth="850" pageHeight="1100" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="yysF0IiuaKqxQZZQFmWz-1" value="&lt;font style=&quot;font-size: 21px;&quot;&gt;Raw Force Profile&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="160" y="190" width="120" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="yysF0IiuaKqxQZZQFmWz-2" value="&lt;div style=&quot;font-size: 21px;&quot;&gt;&lt;font style=&quot;font-size: 21px;&quot;&gt;Excavation&lt;/font&gt;&lt;/div&gt;&lt;div style=&quot;font-size: 21px;&quot;&gt;&lt;font style=&quot;font-size: 21px;&quot;&gt;Footage&lt;/font&gt;&lt;br&gt;&lt;/div&gt;" style="shape=process;whiteSpace=wrap;html=1;backgroundOutline=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="260" y="70" width="130" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="yysF0IiuaKqxQZZQFmWz-3" value="&lt;font style=&quot;font-size: 21px;&quot;&gt;Angle Data&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="430" y="70" width="120" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="yysF0IiuaKqxQZZQFmWz-4" value="" style="endArrow=classic;html=1;rounded=0;" edge="1" parent="1" source="yysF0IiuaKqxQZZQFmWz-1" target="yysF0IiuaKqxQZZQFmWz-13">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="620" y="880" as="sourcePoint" />
+            <mxPoint x="610" y="220" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="yysF0IiuaKqxQZZQFmWz-9" value="" style="endArrow=classic;html=1;rounded=0;" edge="1" parent="1" source="yysF0IiuaKqxQZZQFmWz-2">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="590" y="860" as="sourcePoint" />
+            <mxPoint x="370" y="220" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="yysF0IiuaKqxQZZQFmWz-10" value="&lt;font style=&quot;font-size: 14px;&quot;&gt;Normalize timestamps&lt;/font&gt;" style="edgeLabel;resizable=0;html=1;align=center;verticalAlign=middle;" connectable="0" vertex="1" parent="yysF0IiuaKqxQZZQFmWz-9">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="yysF0IiuaKqxQZZQFmWz-11" value="" style="endArrow=classic;html=1;rounded=0;" edge="1" parent="1" source="yysF0IiuaKqxQZZQFmWz-3">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="346" y="140" as="sourcePoint" />
+            <mxPoint x="540" y="220" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="yysF0IiuaKqxQZZQFmWz-12" value="&lt;font style=&quot;font-size: 14px;&quot;&gt;Resample to 30fps&lt;/font&gt;" style="edgeLabel;resizable=0;html=1;align=center;verticalAlign=middle;" connectable="0" vertex="1" parent="yysF0IiuaKqxQZZQFmWz-11">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="yysF0IiuaKqxQZZQFmWz-13" value="&lt;font style=&quot;font-size: 21px;&quot;&gt;Standardized Force Profile&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="610" y="190" width="130" height="60" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

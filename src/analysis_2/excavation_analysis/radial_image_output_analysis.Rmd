@@ -1,0 +1,233 @@
+---
+title: "Root System Image Analysis"
+author: "Bo Meyering"
+date: "2024-11-04"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r library import, include=FALSE, echo=FALSE}
+library(tidyverse)
+library(lme4)
+library(lmerTest)
+library(emmeans)
+library(multcomp)
+library(multcompView)
+library(GGally)
+```
+
+```{r data import}
+radial_raw <- read.csv("../../../data/processed/radial_img_processing_results/prop_adair_image_results.csv")
+
+prop_adair <- radial_raw[1:144, ]
+prop_picos <- radial_raw[145:nrow(radial_raw), ]
+
+picos_join <- read.csv("../../../metadata/join_tables/prop_picos_join_table.csv")
+adair_join <- read.csv("../../../metadata/join_tables/prop_adair_join_table.csv")
+```
+
+```{r data cleaning}
+
+# ASI weights
+alpha = 0.5
+beta = 0.5
+
+# Cleaning 
+prop_adair <- prop_adair %>% 
+        mutate(
+                row = sub("(^\\d{2})([A-Z])_.*", "17\\2", image_name),
+                tree = sub("(^\\d{2})[A-Z]_.*", "\\1", image_name),
+                sys_id = paste(row, tree, sep = "_")
+        ) %>% 
+        dplyr::select(-c(row, tree)) %>% 
+        left_join(adair_join, by = 'sys_id') %>% 
+        rowwise() %>% 
+        mutate(
+                ASI = (alpha * variance_PC1 + beta * center_offset) / convex_hull_area,
+                ASI_scaled = ASI / (1 + ASI)
+        )
+
+prop_picos <- prop_picos %>% 
+        mutate(
+                row = sub("(^\\d{2})_.*", "\\1", image_name),
+                tree = as.character(as.numeric(sub("(^\\d{2})_(\\d{2})_.*", "\\2", image_name))),
+                sys_id = paste(row, tree, sep='_')
+        ) %>% 
+        dplyr::select(-c(row, tree)) %>% 
+        left_join(picos_join, by = 'sys_id') %>% 
+        rowwise() %>% 
+        mutate(
+                ASI = (alpha * variance_PC1 + beta * center_offset) / convex_hull_area,
+                ASI_scaled = ASI / (1 + ASI)
+        )
+```
+
+```{r Convex Hull Area}
+picos_ch_mm <- lmer(convex_hull_area ~ rs * prop_type + (1|block), data=prop_picos)
+anova(picos_ch_mm)
+picos_ch_emm <- emmeans(picos_ch_mm, specs = c(~rs, ~prop_type, ~rs:prop_type))
+cld(picos_ch_emm$`emmeans of rs`, Letters = letters, reversed=TRUE)
+cld(picos_ch_emm$`emmeans of prop_type`, Letters = letters, reversed=TRUE)
+cld(picos_ch_emm$`emmeans of rs, prop_type`, Letters = letters, reversed=TRUE)
+
+ggplot(prop_picos, aes(x=rs, y=convex_hull_area, fill=rs)) + 
+        geom_boxplot() +
+        facet_wrap(~prop_type)
+
+interaction.plot(prop_picos$rs, prop_picos$prop_type, prop_picos$convex_hull_area)
+
+
+
+
+adair_ch_mm <- lmer(convex_hull_area ~ rs * prop_type + (1|block), data=prop_adair)
+anova(adair_ch_mm)
+adair_ch_emm <- emmeans(adair_ch_mm, specs = c(~rs, ~prop_type, ~rs:prop_type))
+cld(adair_ch_emm$`emmeans of rs`, Letters = letters, reversed=TRUE)
+cld(adair_ch_emm$`emmeans of prop_type`, Letters = letters, reversed=TRUE)
+cld(adair_ch_emm$`emmeans of rs, prop_type`, Letters = letters, reversed=TRUE)
+
+ggplot(prop_adair, aes(x=rs, y=convex_hull_area, fill=rs)) + 
+        geom_boxplot() +
+        facet_wrap(~prop_type)
+
+interaction.plot(prop_adair$rs, prop_adair$prop_type, prop_adair$convex_hull_area)
+
+```
+```{r Solidity}
+picos_ra_mm <- lmer(solidity ~ rs * prop_type + (1|block), data=prop_picos)
+anova(picos_ra_mm)
+picos_ra_emm <- emmeans(picos_ra_mm, specs = c(~rs, ~prop_type, ~rs:prop_type))
+cld(picos_ra_emm$`emmeans of rs`, Letters = letters, reversed=TRUE)
+cld(picos_ra_emm$`emmeans of prop_type`, Letters = letters, reversed=TRUE)
+cld(picos_ra_emm$`emmeans of rs, prop_type`, Letters = letters, reversed=TRUE)
+
+ggplot(prop_picos, aes(x=rs, y=solidity, fill=rs)) + 
+        geom_boxplot() +
+        facet_wrap(~prop_type)
+
+interaction.plot(prop_picos$rs, prop_picos$prop_type, prop_picos$convex_hull_area)
+
+
+
+
+adair_ra_mm <- lmer(solidity ~ rs * prop_type + (1|block), data=prop_adair)
+anova(adair_ra_mm)
+adair_ra_emm <- emmeans(adair_ra_mm, specs = c(~rs, ~prop_type, ~rs:prop_type))
+cld(adair_ra_emm$`emmeans of rs`, Letters = letters, reversed=TRUE)
+cld(adair_ra_emm$`emmeans of prop_type`, Letters = letters, reversed=TRUE)
+cld(adair_ra_emm$`emmeans of rs, prop_type`, Letters = letters, reversed=TRUE)
+
+ggplot(prop_adair, aes(x=rs, y=solidity, fill=rs)) + 
+        geom_boxplot() +
+        facet_wrap(~prop_type)
+
+interaction.plot(prop_adair$rs, prop_adair$prop_type, prop_adair$convex_hull_area)
+
+```
+
+
+```{r Root Area}
+picos_sol_mm <- lmer(root_area ~ rs * prop_type + (1|block), data=prop_picos)
+anova(picos_sol_mm)
+picos_sol_emm <- emmeans(picos_sol_mm, specs = c(~rs, ~prop_type, ~rs:prop_type))
+cld(picos_sol_emm$`emmeans of rs`, Letters = letters, reversed=TRUE)
+cld(picos_sol_emm$`emmeans of prop_type`, Letters = letters, reversed=TRUE)
+cld(picos_sol_emm$`emmeans of rs, prop_type`, Letters = letters, reversed=TRUE)
+
+ggplot(prop_picos, aes(x=rs, y=root_area, fill=rs)) + 
+        geom_boxplot() +
+        facet_wrap(~prop_type)
+
+interaction.plot(prop_picos$rs, prop_picos$prop_type, prop_picos$convex_hull_area)
+
+
+
+
+adair_sol_mm <- lmer(root_area ~ rs * prop_type + (1|block), data=prop_adair)
+anova(adair_sol_mm)
+adair_sol_emm <- emmeans(adair_sol_mm, specs = c(~rs, ~prop_type, ~rs:prop_type))
+cld(adair_sol_emm$`emmeans of rs`, Letters = letters, reversed=TRUE)
+cld(adair_sol_emm$`emmeans of prop_type`, Letters = letters, reversed=TRUE)
+cld(adair_sol_emm$`emmeans of rs, prop_type`, Letters = letters, reversed=TRUE)
+
+ggplot(prop_adair, aes(x=rs, y=root_area, fill=rs)) + 
+        geom_boxplot() +
+        facet_wrap(~prop_type)
+
+interaction.plot(prop_adair$rs, prop_adair$prop_type, prop_adair$convex_hull_area)
+
+```
+
+```{r}
+picos_asi_mm <- lmer(ASI_scaled ~ rs * prop_type + (1|block), data = prop_picos)
+anova(picos_asi_mm)
+picos_asi_emm <- emmeans(picos_asi_mm, specs = c(~rs, ~prop_type, ~rs:prop_type))
+cld(picos_asi_emm$`emmeans of rs`, Letters = letters, reversed=TRUE)
+cld(picos_asi_emm$`emmeans of prop_type`, Letters = letters, reversed=TRUE)
+cld(picos_asi_emm$`emmeans of rs, prop_type`, Letters = letters, reversed=TRUE)
+
+ggplot(prop_picos, aes(x=rs, y=ASI_scaled, fill=rs)) + 
+        geom_boxplot() +
+        facet_wrap(~prop_type)
+
+interaction.plot(prop_picos$rs, prop_picos$prop_type, prop_picos$ASI)
+
+adair_asi_mm <- lmer(ASI_scaled ~ rs * prop_type + (1|block), data = prop_adair)
+anova(adair_asi_mm)
+adair_asi_emm <- emmeans(adair_asi_mm, specs = c(~rs, ~prop_type, ~rs:prop_type))
+cld(adair_asi_emm$`emmeans of rs`, Letters = letters, reversed=TRUE)
+cld(adair_asi_emm$`emmeans of prop_type`, Letters = letters, reversed=TRUE)
+cld(adair_asi_emm$`emmeans of rs, prop_type`, Letters = letters, reversed=TRUE)
+
+ggplot(prop_adair, aes(x=rs, y=ASI_scaled, fill=rs)) + 
+        geom_boxplot() +
+        facet_wrap(~prop_type)
+
+interaction.plot(prop_adair$rs, prop_adair$prop_type, prop_adair$ASI_scaled)
+```
+```{r}
+ft1 <- prop_picos %>% 
+        mutate(trial = "ft1")
+ft2 <- prop_adair %>% 
+        mutate(trial = "ft2")
+combined_data = rbind(ft1, ft2)
+combined_data
+```
+
+```{r}
+combined_asi_mm <- lmer(ASI_scaled ~ rs * prop_type + (1|block) + (1|trial), data=combined_data)
+```
+
+```{r}
+summary(combined_data)
+
+combined_data %>% 
+        group_by(trial) %>% 
+        summarize(
+                mean_asi = mean(ASI_scaled),
+                std_asi = sd(ASI_scaled)
+        )
+
+ggplot(combined_data, aes(x=rs, y=ASI_scaled, fill=rs, group=rs))+
+        geom_boxplot()+
+        facet_wrap(~trial)
+```
+
+```{r}
+subset_data = combined_data %>% 
+        select(convex_hull_area, solidity, root_area, variance_PC1, center_offset, ASI, log(ASI_scaled))
+ggpairs(subset_data)
+```
+
+```{r}
+ggplot(combined_data, aes(x=log(ASI), y=convex_hull_area, color=rs))+
+        geom_point()+
+        scale_color_viridis_d(option='A') +
+        geom_smooth(method = 'glm')+
+        facet_wrap(~prop_type)
+
+```
+

@@ -1,0 +1,100 @@
+---
+title: "Plot Level Analysis"
+author: "Bo Meyering"
+date: "2024-08-07"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Library Imports
+```{r library imports}
+library(dplyr)
+library(lme4)
+library(lmerTest)
+library(data.table)
+library(GGally)
+library(tidyverse)
+library(emmeans)
+```
+
+# Data Imports
+```{r data imports}
+pa_plot_data <- read.csv("../../data/processed/cleaned_data/prop_adair_plot_level.csv")
+pp_plot_data <- read.csv("../../data/processed/cleaned_data/prop_picos_plot_level.csv")
+
+factor_cols <- c('block', 'rs', 'prop_type')
+# pa_plot_data[, ..factor_cols]
+pa_plot_data[, factor_cols] <- lapply(pa_plot_data[, factor_cols], factor)
+pp_plot_data[, factor_cols] <- lapply(pp_plot_data[, factor_cols], factor)
+```
+
+```{r}
+data <- pp_plot_data[, 9:20]
+ggpairs(data)
+```
+# Mixed Models
+```{r Clas qPCR}
+
+pa_pcr_mm <- lmer(hlb_ct_adj ~ rs * prop_type + (1|block), data=pa_plot_data)
+pp_pcr_mm <- lmer(hlb_ct_adj ~ rs * prop_type + (1|block), data=pp_plot_data)
+
+summary(pa_pcr_mm)
+summary(pp_pcr_mm)
+
+anova(pa_pcr_mm)
+anova(pp_pcr_mm)
+
+emmeans(pa_pcr_mm, specs = c(~rs, ~prop_type))
+emmeans(pp_pcr_mm, specs = c(~rs, ~prop_type))
+
+pa_plot_data$trial <- "pa"
+pp_plot_data$trial <- "pp"
+
+combined_data <- rbind(pa_plot_data, pp_plot_data)
+combined_data$trial <- factor(combined_data$trial)
+
+pcr_mm <- lmer(hlb_ct_adj ~ rs * prop_type + (1|trial/block), data=combined_data)
+anova(pcr_mm)
+emmeans(pcr_mm, specs = c(~rs, ~prop_type))
+
+```
+
+```{r cLas qPCR plots}
+pcr_hist <- ggplot(data=combined_data, aes(x=hlb_ct_adj, fill=rs))+
+        geom_density(alpha=.5)+
+        scale_fill_viridis_d(option='F')
+pcr_hist
+```
+```{r Nutrient analysis}
+n_mm <- lmer(n_per ~ rs * prop_type + (1|trial/block), data=combined_data)
+p_mm <- lmer(p_per ~ rs * prop_type + (1|trial/block), data=combined_data)
+k_mm <- lmer(k_per ~ rs * prop_type + (1|trial/block), data=combined_data)
+mg_mm <- lmer(mg_per ~ rs * prop_type + (1|trial/block), data=combined_data)
+ca_mm <- glmer(ca_per ~ rs * prop_type + (1|trial/block), data=combined_data, family=poisson)
+s_mm <- lmer(s_per ~ rs * prop_type + (1|trial/block), data=combined_data)
+b_mm <- lmer(b_ppm ~ rs * prop_type + (1|trial/block), data=combined_data)
+zn_mm <- lmer(zn_ppm ~ rs * prop_type + (1|trial/block), data=combined_data)
+mn_mm <- lmer(mn_ppm ~ rs * prop_type + (1|trial/block), data=combined_data)
+fe_mm <- lmer(fe_ppm ~ rs * prop_type + (1|trial/block), data=combined_data)
+cu_mm <- lmer(cu_ppm ~ rs * prop_type + (1|trial/block), data=combined_data)
+```
+
+```{r}
+anova(n_mm)
+anova(p_mm)
+anova(k_mm)
+anova(mg_mm)
+anova(ca_mm)
+anova(s_mm)
+anova(b_mm)
+anova(zn_mm)
+anova(mn_mm)
+anova(fe_mm)
+anova(cu_mm)
+
+```
+
+
