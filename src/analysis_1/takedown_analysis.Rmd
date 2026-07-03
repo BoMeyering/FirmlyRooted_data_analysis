@@ -25,6 +25,9 @@ library(multcomp)
 library(multcompView)
 library(data.table)
 library(car)
+library(performance)
+library(sjmisc)
+library(MuMIn)
 ```
 
 # Raw Data Import and Aggregation
@@ -39,7 +42,7 @@ pa_tree_data <- fread('../../data/processed/cleaned_data/prop_adair_tree_level.c
                 color = rowMeans(dplyr::select(., starts_with('color')), na.rm=TRUE),
                 soil_dens_kpa = rowMeans(dplyr::select(., starts_with('sd')), na.rm=TRUE),
                 stump_dia_mm = rowMeans(dplyr::select(., starts_with('stump_dia')), na.rm=TRUE),
-                rs_sc_ratio = rs_cm / sc_cm,
+                sc_rs_ratio = sc_cm / rs_cm,
                 can_vol_m3 = (can_1_cm * can_2_cm * height_cm)/(4 * 1000000)
         ) %>% 
         dplyr::select(-c(15:20, 26:29, 34:35))
@@ -48,23 +51,44 @@ pa_tree_data <- fread('../../data/processed/cleaned_data/prop_adair_tree_level.c
 pp_root_data <- fread('../../data/processed/cleaned_data/prop_picos_root_level.csv')
 pp_root_aggregated <- fread('../../data/processed/root_measurements/prop_picos_root_measurement_aggregated.csv')
 pp_tree_data <- fread('../../data/processed/cleaned_data/prop_picos_tree_level.csv') %>% 
-        filter(is.na(comment)) %>% 
-        dplyr::select(-c(comment)) %>% 
+        # filter(is.na(comment)) %>% 
+        # dplyr::select(-c(comment)) %>% 
         mutate(
                 di = rowMeans(dplyr::select(., starts_with('di_')), na.rm=TRUE),
                 thick = rowMeans(dplyr::select(., starts_with('thick')), na.rm=TRUE),
                 color = rowMeans(dplyr::select(., starts_with('color')), na.rm=TRUE),
                 soil_dens_kpa = rowMeans(dplyr::select(., starts_with('sd')), na.rm=TRUE),
                 stump_dia_mm = rowMeans(dplyr::select(., starts_with('stump_dia')), na.rm=TRUE),
-                rs_sc_ratio = rs_cm / sc_cm,
+                sc_rs_ratio = sc_cm / rs_cm,
                 can_vol_m3 = (can_1_cm * can_2_cm * height_cm)/(4 * 1000000)
         ) %>% 
         dplyr::select(-c(15:20, 26:29, 34:35))
+
+
+# Root Plate Depths
+pa_drp_integral <- fread('../../data/images/prop_adair_integral_pixel_depths.csv') %>% 
+        separate(filename, into=c('tree_row', NA, NA)) %>% 
+        mutate(tree = str_sub(tree_row, start=1, end=2),
+               row = paste(17,str_sub(tree_row, start=3, end=3), sep=""),
+               sys_id = paste(row, tree, sep="_"),
+               drp_cm = pixel_depth * 30 / 1399.453) %>% 
+        dplyr::select(sys_id, drp_cm) %>% 
+        group_by(sys_id) %>% 
+        summarize(drp_cm = mean(drp_cm))
+
+pp_drp_integral <- fread('../../data/images/prop_picos_integral_pixel_depths.csv') %>% 
+        separate(filename, into=c('row', 'tree', NA, NA)) %>% 
+        mutate(sys_id = paste(row, tree, sep="_"),
+               drp_cm = pixel_depth * 30 /1399.453) %>% 
+        dplyr::select(sys_id, drp_cm) %>% 
+        group_by(sys_id) %>% 
+        summarize(drp_cm = mean(drp_cm))
 ```
 
 Now we will aggregate some of the tree level growth data into plots
 ```{r data-aggregation}
 pa_tree_agg <- pa_tree_data %>% 
+        left_join(pa_drp_integral, by='sys_id') %>% 
         group_by(rs, prop_type, plot_id, block) %>% 
         summarize(
                 rs_cm = mean(rs_cm, na.rm=TRUE),
@@ -72,6 +96,7 @@ pa_tree_agg <- pa_tree_data %>%
                 height_cm = mean(height_cm, na.rm=TRUE),
                 soil_vmc_pct = mean(soil_vmc_pct, na.rm=TRUE),
                 crown_depth_cm = mean(crown_depth_cm, na.rm=TRUE),
+                drp_cm = mean(drp_cm, na.rm=TRUE),
                 stump_depth_cm = mean(stump_depth_cm, na.rm=TRUE),
                 stump_weight_g = mean(weight_g, na.rm=TRUE),
                 LAI = mean(LAI, na.rm=TRUE), 
@@ -80,12 +105,16 @@ pa_tree_agg <- pa_tree_data %>%
                 color = mean(color, na.rm=TRUE),
                 soil_dens_kpa = mean(soil_dens_kpa, na.rm=TRUE),
                 stump_dia_mm = mean(stump_dia_mm, na.rm=TRUE),
-                rs_sc_ratio = mean(rs_sc_ratio, na.rm=TRUE),
+                sc_rs_ratio = mean(sc_rs_ratio, na.rm=TRUE),
                 can_vol_m3 = mean(can_vol_m3, na.rm=TRUE)
         ) %>% 
-        ungroup()
+        ungroup() %>% 
+        mutate(block = as.factor(block),
+               depth_diff = crown_depth_cm - stump_depth_cm)
+
 
 pp_tree_agg <- pp_tree_data %>% 
+        left_join(pp_drp_integral, by='sys_id') %>% 
         group_by(rs, prop_type, plot_id, block) %>% 
         summarize(
                 rs_cm = mean(rs_cm, na.rm=TRUE),
@@ -93,6 +122,7 @@ pp_tree_agg <- pp_tree_data %>%
                 height_cm = mean(height_cm, na.rm=TRUE),
                 soil_vmc_pct = mean(soil_vmc_pct, na.rm=TRUE),
                 crown_depth_cm = mean(crown_depth_cm, na.rm=TRUE),
+                drp_cm = mean(drp_cm, na.rm=TRUE),
                 stump_depth_cm = mean(stump_depth_cm, na.rm=TRUE),
                 stump_weight_g = mean(weight_g, na.rm=TRUE),
                 LAI = mean(LAI, na.rm=TRUE), 
@@ -101,10 +131,12 @@ pp_tree_agg <- pp_tree_data %>%
                 color = mean(color, na.rm=TRUE),
                 soil_dens_kpa = mean(soil_dens_kpa, na.rm=TRUE),
                 stump_dia_mm = mean(stump_dia_mm, na.rm=TRUE),
-                rs_sc_ratio = mean(rs_sc_ratio, na.rm=TRUE),
+                sc_rs_ratio = mean(sc_rs_ratio, na.rm=TRUE),
                 can_vol_m3 = mean(can_vol_m3, na.rm=TRUE)
         ) %>% 
-        ungroup()
+        ungroup() %>% 
+        mutate(block = as.factor(block),
+               depth_diff = crown_depth_cm - stump_depth_cm)
 ```
 
 # Data Explanation
@@ -152,966 +184,839 @@ Our general explanatory modeling framework will be as follows:
 # Individual Root Binary Data Modeling
 In this section we will use generalized linear mixed effects models to analyse the incidence rate of specific types of roots by rootstock and propagation type, using a binomial link function.
 
-## PROP ADAIR
+## PROP ADAIR (FT2) Root Category proportion glmer
 ```{r prop-adair-glmer-root-modeling}
-# lateral_e, vertical_e, straight, curved, root_bound, knotted, broken, branched, n_branch, n_branch_lt5mm
-# Lateral
-lateral_glmer <- glmer(
-        lateral_e ~ rs * prop_type + (1|block/sys_id), 
-        data=pa_root_data, 
-        family="binomial", 
-        control = glmerControl(optimizer = "bobyqa")
-)
-lateral_glmer_null <- glmer(
-        lateral_e ~ (1|block/sys_id), 
-        data=pa_root_data, 
-        family="binomial", 
-        control = glmerControl(optimizer = "bobyqa")
-)
-lat_gof <- anova(lateral_glmer, lateral_glmer_null)
-lat_rs_cld <- cld(emmeans(lateral_glmer, ~rs), type='response', Letters=letters)
-lat_prop_cld <- cld(emmeans(lateral_glmer, ~prop_type), type='response', Letters=letters)
+#| title: FT2 Root Logistic Modeling
 
-# Straight
-straight_glmer <- glmer(
-        straight ~ rs * prop_type + (1|block/sys_id), 
-        data=pa_root_data, 
-        family="binomial", 
-        control = glmerControl(optimizer = "bobyqa")
-)
-straight_glmer_null <- glmer(
-        straight ~ (1|block/sys_id), 
-        data=pa_root_data, 
-        family="binomial", 
-        control = glmerControl(optimizer = "bobyqa")
-)
-straight_gof <- anova(straight_glmer, straight_glmer_null)
-straight_rs_cld <- cld(emmeans(straight_glmer, ~rs), type='response', Letters=letters)
-straight_prop_cld <- cld(emmeans(straight_glmer, ~prop_type), type='response', Letters=letters)
 
-# Curved
-curved_glmer <- glmer(
-        curved ~ rs * prop_type + (1|block/sys_id), 
-        data=pa_root_data, 
-        family="binomial",
-        control = glmerControl(optimizer = "bobyqa")
-)
-curved_glmer_null <- glmer(
-        curved ~ (1|block/sys_id), 
-        data=pa_root_data, 
-        family="binomial"
-)
-curved_gof <- anova(curved_glmer, curved_glmer_null)
-curved_rs_cld <- cld(emmeans(curved_glmer, ~rs), type='response', Letters=letters)
-curved_prop_cld <- cld(emmeans(curved_glmer, ~prop_type), type='response', Letters=letters)
+columns <- c("lateral_e", "straight", "root_bound", "knotted", "broken", "branched")
+name_vec <- c('Lateral', 'Straight', 'Root Bound', 'Knotted', 'Broken', 'Branched')
 
-# Rootbound
-root_bound_glmer <- glmer(
-        root_bound ~ rs * prop_type + (1|block/sys_id), 
-        data=pa_root_data, 
-        family="binomial",
-        control = glmerControl(optimizer = "bobyqa")
-)
-root_bound_glmer_null <- glmer(
-        root_bound ~ (1|block/sys_id), 
-        data=pa_root_data, 
-        family="binomial",
-        control = glmerControl(optimizer = "bobyqa")
-)
-bound_gof <- anova(root_bound_glmer, root_bound_glmer_null)
-bound_rs_cld <- cld(emmeans(root_bound_glmer, ~rs), type='response', Letters=letters)
-bound_prop_cld <- cld(emmeans(root_bound_glmer, ~prop_type), type='response', Letters=letters)
+ft2_rs_df <- data.frame('rs' = c('US-1516', 'US-812', 'US-897', 'US-942'))
+ft2_prop_df <- data.frame('prop_type' = c('ct', 'mpg', 'sd'))
+ft2_rsprop_df <- data.frame('rs' = rep(c('US-1516', 'US-812', 'US-897', 'US-942'), each=3),
+                            'prop_type' = rep(c('ct', 'mpg', 'sd'), times=4))
 
-# Knotted
-knotted_glmer <- glmer(
-        knotted ~ rs * prop_type + (1|block/sys_id), 
-        data=pa_root_data, 
-        family="binomial",
-        control = glmerControl(optimizer = "bobyqa")
-)
-knotted_glmer_null <- glmer(
-        knotted ~ (1|block/sys_id), 
-        data=pa_root_data, 
-        family="binomial",
-        control = glmerControl(optimizer = "bobyqa")
-)
-knotted_gof <- anova(knotted_glmer, knotted_glmer_null)
-knotted_rs_cld <- cld(emmeans(knotted_glmer, ~rs), type='response', Letters=letters)
-knotted_prop_cld <- cld(emmeans(knotted_glmer, ~prop_type), type='response', Letters=letters)
+ft2_rs_lrt <- c('p-value')
+ft2_prop_lrt <- c('p-value')
+ft2_rsprop_lrt <- c('p-value')
+var_df <- data.frame('var' = c('sys_id:block', 'block'))
 
-# Broken
-broken_glmer <- glmer(
-        broken ~ rs * prop_type + (1|block/sys_id), 
-        data=pa_root_data, 
-        family="binomial",
-        control = glmerControl(optimizer = "bobyqa")
-)
-broken_glmer_null <- glmer(
-        broken ~ (1|block/sys_id), 
-        data=pa_root_data, 
-        family="binomial",
-        control = glmerControl(optimizer = "bobyqa")
-)
-broken_gof <- anova(broken_glmer, broken_glmer_null)
-broken_rs_cld <- cld(emmeans(broken_glmer, ~rs), type='response', Letters=letters)
-broken_prop_cld <- cld(emmeans(broken_glmer, ~prop_type), type='response', Letters=letters)
-
-# Branched
-branched_glmer <- glmer(
-        branched ~ rs * prop_type + (1|block/sys_id), 
-        data=pa_root_data, 
-        family="binomial",
-        control = glmerControl(optimizer = "bobyqa")
-)
-branched_glmer_null <- glmer(
-        branched ~ (1|block/sys_id), 
-        data=pa_root_data, 
-        family="binomial",
-        control = glmerControl(optimizer = "bobyqa")
-)
-branched_gof <- anova(branched_glmer, branched_glmer_null)
-branched_rs_cld <- cld(emmeans(branched_glmer, ~rs), type='response', Letters=letters)
-branched_prop_cld <- cld(emmeans(branched_glmer, ~prop_type), type='response', Letters=letters)
-
-### LISTS ###
-gof_list = list(lat_gof, straight_gof, curved_gof, bound_gof, knotted_gof, broken_gof, branched_gof)
-rs_cld_list = list(lat_rs_cld, straight_rs_cld, curved_rs_cld, bound_rs_cld, knotted_rs_cld, broken_rs_cld, branched_rs_cld)
-prop_cld_list = list(lat_prop_cld, straight_prop_cld, curved_prop_cld, bound_prop_cld, knotted_prop_cld, broken_prop_cld, branched_prop_cld)
-
-### DF Construction ###
-name_vec <- c('lateral', 'straight', 'curved', 'root bound', 'knotted', 'broken', 'branched')
-
-pa_rs_df <- data.frame('rs' = c('US-1516', 'US-812', 'US-897', 'US-942'))
-pa_rs_gof <- c('GOF')
-pa_prop_df <- data.frame('prop_type' = c('ct', 'mpg', 'sd'))
-pa_prop_gof <- c('GOF')
-
-for (i in 1:length(rs_cld_list)) {
-
-        tmp <- data.frame(rs_cld_list[[i]]) %>% 
-                mutate(mean_letter = paste(sprintf("%.4f", prob), trimws(.group, 'both'), sep=' '))
-        pa_rs_df <- pa_rs_df %>%
-                left_join(tmp[,c(1, 8)], by='rs')
-        p_value <- gof_list[[i]]$"Pr(>Chisq)"[2]
-        pa_rs_gof <- c(pa_rs_gof, sprintf("%.4f", p_value))
-
+i <- 1
+for(trait in columns){
+        # Construct formulae
+        f <- paste(trait, " ~ rs * prop_type + (1|block/sys_id)", sep="")
+        null_f <- paste(trait, " ~ (1|block/sys_id)", sep="")
+        rs_f <- paste(trait, " ~ rs + (1|block/sys_id)", sep="")
+        prop_f <- paste(trait, " ~ prop_type + (1|block/sys_id)", sep="")
+        rsprop_f <- paste(trait, " ~ rs + prop_type + (1|block/sys_id)", sep="")
         
-        tmp <- data.frame(prop_cld_list[[i]]) %>% 
-                mutate(mean_letter = paste(sprintf("%.4f", prob), trimws(.group, 'both'), sep=' '))
-        pa_prop_df <- pa_prop_df %>%
-                left_join(tmp[,c(1, 8)], by='prop_type')
-        p_value <- gof_list[[i]]$"Pr(>Chisq)"[2]
-        pa_prop_gof <- c(pa_prop_gof, sprintf("%.4f", p_value))
-}
-colnames(pa_rs_df)[2:8] <- name_vec
-colnames(pa_prop_df)[2:8] <- name_vec
+        
+        glmer_mod <- glmer(
+                f, 
+                data=pa_root_data, 
+                family="binomial", 
+                control = glmerControl(optimizer = "bobyqa")
+        )
+        null_mod <- glmer(
+                null_f,
+                data=pa_root_data, 
+                family="binomial", 
+                control = glmerControl(optimizer = "bobyqa")
+        )
+        
+        rs_mod <- glmer(
+                rs_f, 
+                data=pa_root_data, 
+                family="binomial", 
+                control = glmerControl(optimizer = "bobyqa")
+        )
+        
+        prop_mod <- glmer(
+                prop_f, 
+                data=pa_root_data, 
+                family="binomial", 
+                control = glmerControl(optimizer = "bobyqa")
+        )
+        
+        rsprop_mod <- glmer(
+                rsprop_f, 
+                data=pa_root_data, 
+                family="binomial", 
+                control = glmerControl(optimizer = "bobyqa")
+        )
+        
+        # LRT statistics
+        rs_lrt <- data.frame(anova(glmer_mod, prop_mod))$Pr..Chisq.[2]
+        prop_lrt <- data.frame(anova(glmer_mod, rs_mod))$Pr..Chisq.[2]
+        rsprop_lrt <- data.frame(anova(glmer_mod, rsprop_mod))$Pr..Chisq.[2]
+        
+        ft2_rs_lrt <- c(ft2_rs_lrt, rs_lrt)
+        ft2_prop_lrt <- c(ft2_prop_lrt, prop_lrt)
+        ft2_rsprop_lrt <- c(ft2_rsprop_lrt, rsprop_lrt)
+        
+        # Random Effects Variance
+        ranefvar <- as.data.frame(VarCorr(glmer_mod)) %>% 
+                dplyr::select(grp, vcov)
+        var_df <- var_df %>% 
+                left_join(ranefvar, by=join_by(var==grp))
+        
+        emm <- emmeans(glmer_mod, c(~rs, ~prop_type, ~rs:prop_type), type='response')
 
-pa_root_rs_df <- rbind(pa_rs_df, pa_rs_gof)
-pa_root_prop_df <- rbind(pa_prop_df, pa_prop_gof)
+        rs_cld <- cld(emm$`emmeans of rs`, reversed=TRUE, Letters = letters)
+        prop_cld <- cld(emm$`emmeans of prop_type`, reversed=TRUE, Letters = letters)
+        rsprop_cld <- cld(emm$`emmeans of rs, prop_type`, reversed=TRUE, Letters = letters)
+        
+        tmp <- data.frame(rs_cld) %>% 
+                mutate(mean_letter = paste(sprintf("%.3f", prob), trimws(.group, 'both'), sep=' '))
+        ft2_rs_df <- ft2_rs_df %>%
+                left_join(tmp[,c(1, 8)], by='rs')
+        
+        tmp <- data.frame(prop_cld) %>% 
+                mutate(mean_letter = paste(sprintf("%.3f", prob), trimws(.group, 'both'), sep=' '))
+        ft2_prop_df <- ft2_prop_df %>%
+                left_join(tmp[,c(1, 8)], by='prop_type')
+        
+        tmp <- data.frame(rsprop_cld) %>%
+                mutate(mean_letter = paste(sprintf("%.3f", prob), trimws(.group, 'both'), sep=' '))
+        ft2_rsprop_df <- ft2_rsprop_df %>%
+                left_join(tmp[,c(1, 2, 9)], by=c('rs', 'prop_type'))
+}
+
+ft2_rsprop_df <- ft2_rsprop_df %>%
+        mutate('Rootstock X Propagation Method' = paste(rs, prop_type, sep=":")) %>%
+        dplyr::select(-c(rs, prop_type)) %>% 
+        dplyr::select('Rootstock X Propagation Method', everything())
+
+colnames(ft2_rs_df)[2:7] <- name_vec
+colnames(ft2_prop_df)[2:7] <- name_vec
+colnames(ft2_rsprop_df)[2:7] <- name_vec
+colnames(var_df)[2:7] <- name_vec
+
+ft2_rs_df <- rbind(ft2_rs_df, ft2_rs_lrt)
+ft2_prop_df <- rbind(ft2_prop_df, ft2_prop_lrt)
+ft2_rsprop_df <- rbind(ft2_rsprop_df, ft2_rsprop_lrt)
+
+write.csv(x = ft2_rs_df, '../../manuscripts/analysis_output_tables/ft2_rs_root_glmer_proportion_table.csv')
+write.csv(x = ft2_prop_df, '../../manuscripts/analysis_output_tables/ft2_prop_root_glmer_proportion_table.csv')
+write.csv(x = ft2_rsprop_df, '../../manuscripts/analysis_output_tables/ft2_rsprop_root_glmer_proportion_table.csv')
+write.csv(x = var_df, '../../manuscripts/analysis_output_tables/ft2_root_glmer_variance_table.csv')
 ```
 
-## PROP PICOS
+## PROP PICOS (FT1) Root Category proportion glmer
 ```{r prop-picos-glmer-root-modeling}
-# Lateral
-lateral_glmer <- glmer(
-        lateral_e ~ rs * prop_type + (1|block/sys_id), 
-        data=pp_root_data, 
-        family="binomial", 
-        control = glmerControl(optimizer = "bobyqa")
-)
-lateral_glmer_null <- glmer(
-        lateral_e ~ (1|block/sys_id), 
-        data=pp_root_data, 
-        family="binomial", 
-        control = glmerControl(optimizer = "bobyqa")
-)
-lat_gof <- anova(lateral_glmer, lateral_glmer_null)
-lat_rs_cld <- cld(emmeans(lateral_glmer, ~rs), type='response', Letters=letters)
-lat_prop_cld <- cld(emmeans(lateral_glmer, ~prop_type), type='response', Letters=letters)
 
-# Straight
-straight_glmer <- glmer(
-        straight ~ rs * prop_type + (1|block/sys_id), 
-        data=pp_root_data, 
-        family="binomial", 
-        control = glmerControl(optimizer = "bobyqa")
-)
-straight_glmer_null <- glmer(
-        straight ~ (1|block/sys_id), 
-        data=pp_root_data, 
-        family="binomial", 
-        control = glmerControl(optimizer = "bobyqa")
-)
-straight_gof <- anova(straight_glmer, straight_glmer_null)
-straight_rs_cld <- cld(emmeans(straight_glmer, ~rs), type='response', Letters=letters)
-straight_prop_cld <- cld(emmeans(straight_glmer, ~prop_type), type='response', Letters=letters)
+columns <- c("lateral_e", "straight", "root_bound", "knotted", "broken", "branched")
+name_vec <- c('Lateral', 'Straight', 'Root Bound', 'Knotted', 'Broken', 'Branched')
 
-# Curved
-curved_glmer <- glmer(
-        curved ~ rs * prop_type + (1|block/sys_id), 
-        data=pp_root_data, 
-        family="binomial",
-        control = glmerControl(optimizer = "bobyqa")
-)
-curved_glmer_null <- glmer(
-        curved ~ (1|block/sys_id), 
-        data=pp_root_data, 
-        family="binomial"
-)
-curved_gof <- anova(curved_glmer, curved_glmer_null)
-curved_rs_cld <- cld(emmeans(curved_glmer, ~rs), type='response', Letters=letters)
-curved_prop_cld <- cld(emmeans(curved_glmer, ~prop_type), type='response', Letters=letters)
+ft1_rs_df <- data.frame('rs' = c('US-1516', 'US-812', 'US-897', 'US-942'))
+ft1_prop_df <- data.frame('prop_type' = c('ct', 'mpg', 'sd'))
+ft1_rsprop_df <- data.frame('rs' = rep(c('US-1516', 'US-812', 'US-897', 'US-942'), each=3),
+                            'prop_type' = rep(c('ct', 'mpg', 'sd'), times=4))
 
-# Rootbound
-root_bound_glmer <- glmer(
-        root_bound ~ rs * prop_type + (1|block/sys_id), 
-        data=pp_root_data, 
-        family="binomial",
-        control = glmerControl(optimizer = "bobyqa")
-)
-root_bound_glmer_null <- glmer(
-        root_bound ~ (1|block/sys_id), 
-        data=pp_root_data, 
-        family="binomial",
-        control = glmerControl(optimizer = "bobyqa")
-)
-bounf_gof <- anova(root_bound_glmer, root_bound_glmer_null)
-bound_rs_cld <- cld(emmeans(root_bound_glmer, ~rs), type='response', Letters=letters)
-bound_prop_cld <- cld(emmeans(root_bound_glmer, ~prop_type), type='response', Letters=letters)
+ft1_rs_lrt <- c('p-value')
+ft1_prop_lrt <- c('p-value')
+ft1_rsprop_lrt <- c('p-value')
+var_df <- data.frame('var' = c('sys_id:block', 'block'))
 
-# Knotted
-knotted_glmer <- glmer(
-        knotted ~ rs * prop_type + (1|block/sys_id), 
-        data=pp_root_data, 
-        family="binomial",
-        control = glmerControl(optimizer = "bobyqa")
-)
-knotted_glmer_null <- glmer(
-        knotted ~ (1|block/sys_id), 
-        data=pp_root_data, 
-        family="binomial",
-        control = glmerControl(optimizer = "bobyqa")
-)
-knotted_gof <- anova(knotted_glmer, knotted_glmer_null)
-knotted_rs_cld <- cld(emmeans(knotted_glmer, ~rs), type='response', Letters=letters)
-knotted_prop_cld <- cld(emmeans(knotted_glmer, ~prop_type), type='response', Letters=letters)
-
-# Broken
-broken_glmer <- glmer(
-        broken ~ rs * prop_type + (1|block/sys_id), 
-        data=pp_root_data, 
-        family="binomial",
-        control = glmerControl(optimizer = "bobyqa")
-)
-broken_glmer_null <- glmer(
-        broken ~ (1|block/sys_id), 
-        data=pp_root_data, 
-        family="binomial",
-        control = glmerControl(optimizer = "bobyqa")
-)
-broken_gof <- anova(broken_glmer, broken_glmer_null)
-broken_rs_cld <- cld(emmeans(broken_glmer, ~rs), type='response', Letters=letters)
-broken_prop_cld <- cld(emmeans(broken_glmer, ~prop_type), type='response', Letters=letters)
-
-# Branched
-branched_glmer <- glmer(
-        branched ~ rs * prop_type + (1|block/sys_id), 
-        data=pp_root_data, 
-        family="binomial",
-        control = glmerControl(optimizer = "bobyqa")
-)
-branched_glmer_null <- glmer(
-        branched ~ (1|block/sys_id), 
-        data=pp_root_data, 
-        family="binomial",
-        control = glmerControl(optimizer = "bobyqa")
-)
-
-branched_gof <- anova(branched_glmer, branched_glmer_null)
-branched_rs_cld <- cld(emmeans(branched_glmer, ~rs), type='response', Letters=letters)
-branched_prop_cld <- cld(emmeans(branched_glmer, ~prop_type), type='response', Letters=letters)
-
-### LISTS ###
-gof_list = list(lat_gof, straight_gof, curved_gof, bound_gof, knotted_gof, broken_gof, branched_gof)
-rs_cld_list = list(lat_rs_cld, straight_rs_cld, curved_rs_cld, bound_rs_cld, knotted_rs_cld, broken_rs_cld, branched_rs_cld)
-prop_cld_list = list(lat_prop_cld, straight_prop_cld, curved_prop_cld, bound_prop_cld, knotted_prop_cld, broken_prop_cld, branched_prop_cld)
-
-### DF Construction ###
-name_vec <- c('lateral', 'straight', 'curved', 'root bound', 'knotted', 'broken', 'branched')
-
-pp_rs_df <- data.frame('rs' = c('US-1516', 'US-812', 'US-897', 'US-942'))
-pp_rs_gof <- c('GOF')
-pp_prop_df <- data.frame('prop_type' = c('ct', 'mpg', 'sd'))
-pp_prop_gof <- c('GOF')
-
-for (i in 1:length(rs_cld_list)) {
-
-        tmp <- data.frame(rs_cld_list[[i]]) %>% 
-                mutate(mean_letter = paste(sprintf("%.4f", prob), trimws(.group, 'both'), sep=' '))
-        pp_rs_df <- pp_rs_df %>%
-                left_join(tmp[,c(1, 8)], by='rs')
-        p_value <- gof_list[[i]]$"Pr(>Chisq)"[2]
-        pp_rs_gof <- c(pp_rs_gof, sprintf("%.4f", p_value))
-
+i <- 1
+for(trait in columns){
+        # Construct formulae
+        f <- paste(trait, " ~ rs * prop_type + (1|block/sys_id)", sep="")
+        null_f <- paste(trait, " ~ (1|block/sys_id)", sep="")
+        rs_f <- paste(trait, " ~ rs + (1|block/sys_id)", sep="")
+        prop_f <- paste(trait, " ~ prop_type + (1|block/sys_id)", sep="")
+        rsprop_f <- paste(trait, " ~ rs + prop_type + (1|block/sys_id)", sep="")
         
-        tmp <- data.frame(prop_cld_list[[i]]) %>% 
-                mutate(mean_letter = paste(sprintf("%.4f", prob), trimws(.group, 'both'), sep=' '))
-        pp_prop_df <- pp_prop_df %>%
-                left_join(tmp[,c(1, 8)], by='prop_type')
-        p_value <- gof_list[[i]]$"Pr(>Chisq)"[2]
-        pp_prop_gof <- c(pp_prop_gof, sprintf("%.4f", p_value))
-}
-colnames(pp_rs_df)[2:8] <- name_vec
-colnames(pp_prop_df)[2:8] <- name_vec
+        
+        glmer_mod <- glmer(
+                f, 
+                data=pp_root_data, 
+                family="binomial", 
+                control = glmerControl(optimizer = "bobyqa")
+        )
+        null_mod <- glmer(
+                null_f,
+                data=pp_root_data, 
+                family="binomial", 
+                control = glmerControl(optimizer = "bobyqa")
+        )
+        
+        rs_mod <- glmer(
+                rs_f, 
+                data=pp_root_data, 
+                family="binomial", 
+                control = glmerControl(optimizer = "bobyqa")
+        )
+        
+        prop_mod <- glmer(
+                prop_f, 
+                data=pp_root_data, 
+                family="binomial", 
+                control = glmerControl(optimizer = "bobyqa")
+        )
+        
+        rsprop_mod <- glmer(
+                rsprop_f, 
+                data=pp_root_data, 
+                family="binomial", 
+                control = glmerControl(optimizer = "bobyqa")
+        )
+        
+        # LRT statistics
+        rs_lrt <- data.frame(anova(glmer_mod, prop_mod))$Pr..Chisq.[2]
+        prop_lrt <- data.frame(anova(glmer_mod, rs_mod))$Pr..Chisq.[2]
+        rsprop_lrt <- data.frame(anova(glmer_mod, rsprop_mod))$Pr..Chisq.[2]
+        
+        ft1_rs_lrt <- c(ft1_rs_lrt, rs_lrt)
+        ft1_prop_lrt <- c(ft1_prop_lrt, prop_lrt)
+        ft1_rsprop_lrt <- c(ft1_rsprop_lrt, rsprop_lrt)
+        
+        # Random Effects Variance
+        ranefvar <- as.data.frame(VarCorr(glmer_mod)) %>% 
+                dplyr::select(grp, vcov)
+        var_df <- var_df %>% 
+                left_join(ranefvar, by=join_by(var==grp))
+        
+        emm <- emmeans(glmer_mod, c(~rs, ~prop_type, ~rs:prop_type), type='response')
 
-pp_root_rs_df <- rbind(pp_rs_df, pp_rs_gof)
-pp_root_prop_df <- rbind(pp_prop_df, pp_prop_gof)
+        rs_cld <- cld(emm$`emmeans of rs`, reversed=TRUE, Letters = letters)
+        prop_cld <- cld(emm$`emmeans of prop_type`, reversed=TRUE, Letters = letters)
+        rsprop_cld <- cld(emm$`emmeans of rs, prop_type`, reversed=TRUE, Letters = letters)
+        
+        tmp <- data.frame(rs_cld) %>% 
+                mutate(mean_letter = paste(sprintf("%.3f", prob), trimws(.group, 'both'), sep=' '))
+        ft1_rs_df <- ft1_rs_df %>%
+                left_join(tmp[,c(1, 8)], by='rs')
+        
+        tmp <- data.frame(prop_cld) %>% 
+                mutate(mean_letter = paste(sprintf("%.3f", prob), trimws(.group, 'both'), sep=' '))
+        ft1_prop_df <- ft1_prop_df %>%
+                left_join(tmp[,c(1, 8)], by='prop_type')
+        
+        tmp <- data.frame(rsprop_cld) %>%
+                mutate(mean_letter = paste(sprintf("%.3f", prob), trimws(.group, 'both'), sep=' '))
+        ft1_rsprop_df <- ft1_rsprop_df %>%
+                left_join(tmp[,c(1, 2, 9)], by=c('rs', 'prop_type'))
+}
+
+ft1_rsprop_df <- ft1_rsprop_df %>%
+        mutate('Rootstock X Propagation Method' = paste(rs, prop_type, sep=":")) %>%
+        dplyr::select(-c(rs, prop_type)) %>% 
+        dplyr::select('Rootstock X Propagation Method', everything())
+
+colnames(ft1_rs_df)[2:7] <- name_vec
+colnames(ft1_prop_df)[2:7] <- name_vec
+colnames(ft1_rsprop_df)[2:7] <- name_vec
+colnames(var_df)[2:7] <- name_vec
+
+ft1_rs_df <- rbind(ft1_rs_df, ft1_rs_lrt)
+ft1_prop_df <- rbind(ft1_prop_df, ft1_prop_lrt)
+ft1_rsprop_df <- rbind(ft1_rsprop_df, ft1_rsprop_lrt)
+
+write.csv(x = ft1_rs_df, '../../manuscripts/analysis_output_tables/ft1_rs_root_glmer_proportion_table.csv')
+write.csv(x = ft1_prop_df, '../../manuscripts/analysis_output_tables/ft1_prop_root_glmer_proportion_table.csv')
+write.csv(x = ft1_rsprop_df, '../../manuscripts/analysis_output_tables/ft1_rsprop_root_glmer_proportion_table.csv')
+write.csv(x = var_df, '../../manuscripts/analysis_output_tables/ft1_root_glmer_variance_table.csv')
 ```
+
 
 
 # Tree Level Continuous Root Data
 In this section we will use standard linear mixed effects models (lmer) to analyse some of the more continuous root data on a 
-
-## PROP ADAIR
+## PROP ADAIR (FT2) Continuous Root Data modeling
 ```{r prop-adair-tree-level-continuous-root-data}
-### PROP ADAIR ###
+### PROP ADAIR (FT2) ###
 # mixed models
-pa_seg_depth_mm <- lmer(seg_depth_cm ~ rs * prop_type + (1|block/sys_id), data=pa_root_data)
-pa_em_depth_mm <- lmer(em_depth_cm ~ rs * prop_type + (1|block/sys_id), data=pa_root_data)
-pa_bdia_mm <- lmer(seg_b_dia ~ rs * prop_type + (1|block/sys_id), data=pa_root_data)
-pa_ddia_mm <- lmer(seg_d_dia ~ rs * prop_type + (1|block/sys_id), data=pa_root_data)
+ft2_seg_depth_mm <- lmer(seg_depth_cm ~ rs * prop_type + (1|block/sys_id), data=pa_root_data)
+ft2_em_depth_mm <- lmer(em_depth_cm ~ rs * prop_type + (1|block/sys_id), data=pa_root_data)
+ft2_bdia_mm <- lmer(seg_b_dia ~ rs * prop_type + (1|block/sys_id), data=pa_root_data)
+ft2_ddia_mm <- lmer(seg_d_dia ~ rs * prop_type + (1|block/sys_id), data=pa_root_data)
 
 # Anova objects
-pa_seg_aov <- anova(pa_seg_depth_mm)
-pa_em_aov <- anova(pa_em_depth_mm)
-pa_bdia_aov <- anova(pa_bdia_mm)
-pa_ddia_aov <- anova(pa_ddia_mm)
+ft2_seg_aov <- anova(ft2_seg_depth_mm)
+ft2_em_aov <- anova(ft2_em_depth_mm)
+ft2_bdia_aov <- anova(ft2_bdia_mm)
+ft2_ddia_aov <- anova(ft2_ddia_mm)
 
 # Emmeans objects
-pa_seg_emm <- emmeans(pa_seg_depth_mm, specs=c(~rs, ~prop_type, ~rs:prop_type))
-pa_em_emm <- emmeans(pa_em_depth_mm, specs=c(~rs, ~prop_type, ~rs:prop_type))
-pa_bdia_emm <- emmeans(pa_bdia_mm, specs=c(~rs, ~prop_type, ~rs:prop_type))
-pa_ddia_emm <- emmeans(pa_ddia_mm, specs=c(~rs, ~prop_type, ~rs:prop_type))
+ft2_seg_emm <- emmeans(ft2_seg_depth_mm, specs=c(~rs, ~prop_type, ~rs:prop_type))
+ft2_em_emm <- emmeans(ft2_em_depth_mm, specs=c(~rs, ~prop_type, ~rs:prop_type))
+ft2_bdia_emm <- emmeans(ft2_bdia_mm, specs=c(~rs, ~prop_type, ~rs:prop_type))
+ft2_ddia_emm <- emmeans(ft2_ddia_mm, specs=c(~rs, ~prop_type, ~rs:prop_type))
+
+# Ranef Variance
+ft2_seg_var <- as.data.frame(VarCorr(ft2_seg_depth_mm))
+ft2_em_var <- as.data.frame(VarCorr(ft2_em_depth_mm))
+ft2_bdia_var <- as.data.frame(VarCorr(ft2_bdia_mm))
+ft2_ddia_var <- as.data.frame(VarCorr(ft2_ddia_mm))
 
 ### List creation ###
 #####################
-aov_list = list(pa_seg_aov, pa_em_aov, pa_bdia_aov, pa_ddia_aov)
+aov_list = list(ft2_seg_aov, ft2_em_aov, ft2_bdia_aov, ft2_ddia_aov)
+var_list = list(ft2_seg_var, ft2_em_var, ft2_bdia_var, ft2_ddia_var)
 rs_cld_list = list(
-        cld(pa_seg_emm$`emmeans of rs`, Letters = letters, reversed = TRUE), 
-        cld(pa_em_emm$`emmeans of rs`, Letters = letters, reversed = TRUE), 
-        cld(pa_bdia_emm$`emmeans of rs`, Letters = letters, reversed = TRUE), 
-        cld(pa_ddia_emm$`emmeans of rs`, Letters = letters, reversed = TRUE)
+        cld(ft2_seg_emm$`emmeans of rs`, Letters = letters, reversed = TRUE), 
+        cld(ft2_em_emm$`emmeans of rs`, Letters = letters, reversed = TRUE), 
+        cld(ft2_bdia_emm$`emmeans of rs`, Letters = letters, reversed = TRUE), 
+        cld(ft2_ddia_emm$`emmeans of rs`, Letters = letters, reversed = TRUE)
 )
 prop_cld_list = list(
-        cld(pa_seg_emm$`emmeans of prop_type`, Letters = letters, reversed = TRUE), 
-        cld(pa_em_emm$`emmeans of prop_type`, Letters = letters, reversed = TRUE), 
-        cld(pa_bdia_emm$`emmeans of prop_type`, Letters = letters, reversed = TRUE), 
-        cld(pa_ddia_emm$`emmeans of prop_type`, Letters = letters, reversed = TRUE)
+        cld(ft2_seg_emm$`emmeans of prop_type`, Letters = letters, reversed = TRUE), 
+        cld(ft2_em_emm$`emmeans of prop_type`, Letters = letters, reversed = TRUE), 
+        cld(ft2_bdia_emm$`emmeans of prop_type`, Letters = letters, reversed = TRUE), 
+        cld(ft2_ddia_emm$`emmeans of prop_type`, Letters = letters, reversed = TRUE)
 )
 rs_prop_cld_list = list(
-        cld(pa_seg_emm$`emmeans of rs, prop_type`, Letters = letters, reversed = TRUE), 
-        cld(pa_em_emm$`emmeans of rs, prop_type`, Letters = letters, reversed = TRUE), 
-        cld(pa_bdia_emm$`emmeans of rs, prop_type`, Letters = letters, reversed = TRUE), 
-        cld(pa_ddia_emm$`emmeans of rs, prop_type`, Letters = letters, reversed = TRUE)
+        cld(ft2_seg_emm$`emmeans of rs, prop_type`, Letters = letters, reversed = TRUE), 
+        cld(ft2_em_emm$`emmeans of rs, prop_type`, Letters = letters, reversed = TRUE), 
+        cld(ft2_bdia_emm$`emmeans of rs, prop_type`, Letters = letters, reversed = TRUE), 
+        cld(ft2_ddia_emm$`emmeans of rs, prop_type`, Letters = letters, reversed = TRUE)
 )
 
 ### DF Construction ###
 name_vec <- c('seg_depth_cm', 'em_depth_cm', 'b_dia_mm', 'd_dia_mm')
 
-pa_rs_df <- data.frame('rs' = c('US-1516', 'US-812', 'US-897', 'US-942'))
-pa_rs_aov <- c('ANOVA')
-pa_prop_df <- data.frame('prop_type' = c('ct', 'mpg', 'sd'))
-pa_prop_aov <- c('ANOVA')
-pa_rs_prop_df <- data.frame('rs' = rep(c('US-1516', 'US-812', 'US-897', 'US-942'), each = 3),
+ft2_rs_df <- data.frame('rs' = c('US-1516', 'US-812', 'US-897', 'US-942'))
+ft2_rs_aov <- c('p-value')
+ft2_prop_df <- data.frame('prop_type' = c('ct', 'mpg', 'sd'))
+ft2_prop_aov <- c('p-value')
+ft2_rs_prop_df <- data.frame('rs' = rep(c('US-1516', 'US-812', 'US-897', 'US-942'), each = 3),
                             'prop_type' = rep(c('ct', 'mpg', 'sd'), times=4))
-pa_rs_prop_aov <- c('ANOVA', '')
+ft2_rs_prop_aov <- c('p-value', '')
+
+ft2_var_df <- data.frame('grp' = c('sys_id:block', 'block', 'Residual'))
 
 for (i in 1:length(rs_cld_list)) {
         # Pull out data from the rs CLD
         tmp <- data.frame(rs_cld_list[[i]]) %>% 
                 mutate(mean_letter = paste(sprintf("%.4f", emmean), trimws(.group, 'both'), sep=' '))
-        pa_rs_df <- pa_rs_df %>%
+        ft2_rs_df <- ft2_rs_df %>%
                 left_join(tmp[,c(1, 8)], by='rs')
         p_value <- aov_list[[i]]$"Pr(>F)"[1]
-        pa_rs_aov <- c(pa_rs_aov, sprintf("%.4f", p_value))
+        ft2_rs_aov <- c(ft2_rs_aov, p_value)
 
         # Prop_type CLD
         tmp <- data.frame(prop_cld_list[[i]]) %>% 
                 mutate(mean_letter = paste(sprintf("%.4f", emmean), trimws(.group, 'both'), sep=' '))
-        pa_prop_df <- pa_prop_df %>%
+        ft2_prop_df <- ft2_prop_df %>%
                 left_join(tmp[,c(1, 8)], by='prop_type')
         p_value <- aov_list[[i]]$"Pr(>F)"[2]
-        pa_prop_aov <- c(pa_prop_aov, sprintf("%.4f", p_value))
-        
-        tmp <- data.frame(rs_prop_cld_list[[i]]) %>% 
-                mutate(mean_letter = paste(sprintf("%.4f", emmean), trimws(.group, 'both'), sep=' '))
+        ft2_prop_aov <- c(ft2_prop_aov, p_value)
         
         # RS:Prop_type CLD
-        pa_rs_prop_df <- pa_rs_prop_df %>%
+        tmp <- data.frame(rs_prop_cld_list[[i]]) %>% 
+                mutate(mean_letter = paste(sprintf("%.4f", emmean), trimws(.group, 'both'), sep=' '))
+        ft2_rs_prop_df <- ft2_rs_prop_df %>%
                 left_join(tmp[,c(1, 2, 9)], by=c('rs', 'prop_type'))
         p_value <- aov_list[[i]]$"Pr(>F)"[3]
-        pa_rs_prop_aov <- c(pa_rs_prop_aov, sprintf("%.4f", p_value))
+        ft2_rs_prop_aov <- c(ft2_rs_prop_aov, p_value)
+        
+        # Ranef variance
+        tmp <- data.frame(var_list[[i]]) %>% 
+                dplyr::select(grp, vcov)
+        ft2_var_df <- ft2_var_df %>% 
+                left_join(tmp, by='grp')
 }
-colnames(pa_rs_df)[2:5] <- name_vec
-colnames(pa_prop_df)[2:5] <- name_vec
-colnames(pa_rs_prop_df)[3:6] <- name_vec
+colnames(ft2_rs_df)[2:5] <- name_vec
+colnames(ft2_prop_df)[2:5] <- name_vec
+colnames(ft2_rs_prop_df)[3:6] <- name_vec
+colnames(ft2_var_df)[2:5] <- name_vec
 
-pa_ctsroots_rs_df <- rbind(pa_rs_df, pa_rs_aov)
-pa_ctsroots_prop_df <- rbind(pa_prop_df, pa_prop_aov)
-pa_ctsroots_rs_prop_df <- rbind(pa_rs_prop_df, pa_rs_prop_aov)
+ft2_ctsroots_rs_df <- rbind(ft2_rs_df, ft2_rs_aov)
+ft2_ctsroots_prop_df <- rbind(ft2_prop_df, ft2_prop_aov)
+ft2_ctsroots_rs_prop_df <- rbind(ft2_rs_prop_df, ft2_rs_prop_aov)
+
+write.csv(ft2_ctsroots_rs_df, '../../manuscripts/analysis_output_tables/ft2_rs_ctsroots_table.csv')
+write.csv(ft2_ctsroots_prop_df, '../../manuscripts/analysis_output_tables/ft2_prop_ctsroots_table.csv')
+write.csv(ft2_ctsroots_rs_prop_df, '../../manuscripts/analysis_output_tables/ft2_rsprop_ctsroots_table.csv')
+write.csv(ft2_var_df, '../../manuscripts/analysis_output_tables/ft2_ctsroots_variance_table.csv')
 
 ```
 
-## PROP PICOS
+## PROP PICOS (FT1) Continuous Root Data Modeling
 ```{r prop-picos-tree-level-continuous-root-data}
-### PROP PICOS ###
-# Mixed models
-pp_seg_depth_mm <- lmer(seg_depth_cm ~ rs * prop_type + (1|block/sys_id), data=pp_root_data)
-pp_em_depth_mm <- lmer(em_depth_cm ~ rs * prop_type + (1|block/sys_id), data=pp_root_data)
-pp_bdia_mm <- lmer(seg_b_dia ~ rs * prop_type + (1|block/sys_id), data=pp_root_data)
-pp_ddia_mm <- lmer(seg_d_dia ~ rs * prop_type + (1|block/sys_id), data=pp_root_data)
+### PROP PICOS (FT1) ###
+# mixed models
+ft1_seg_depth_mm <- lmer(seg_depth_cm ~ rs * prop_type + (1|block/sys_id), data=pp_root_data)
+ft1_em_depth_mm <- lmer(em_depth_cm ~ rs * prop_type + (1|block/sys_id), data=pp_root_data)
+ft1_bdia_mm <- lmer(seg_b_dia ~ rs * prop_type + (1|block/sys_id), data=pp_root_data)
+ft1_ddia_mm <- lmer(seg_d_dia ~ rs * prop_type + (1|block/sys_id), data=pp_root_data)
 
 # Anova objects
-pp_seg_aov <- anova(pp_seg_depth_mm)
-pp_em_aov <- anova(pp_em_depth_mm)
-pp_bdia_aov <- anova(pp_bdia_mm)
-pp_ddia_aov <- anova(pp_ddia_mm)
+ft1_seg_aov <- anova(ft1_seg_depth_mm)
+ft1_em_aov <- anova(ft1_em_depth_mm)
+ft1_bdia_aov <- anova(ft1_bdia_mm)
+ft1_ddia_aov <- anova(ft1_ddia_mm)
 
 # Emmeans objects
-pp_seg_emm <- emmeans(pp_seg_depth_mm, specs=c(~rs, ~prop_type, ~rs:prop_type))
-pp_em_emm <- emmeans(pp_em_depth_mm, specs=c(~rs, ~prop_type, ~rs:prop_type))
-pp_bdia_emm <- emmeans(pp_bdia_mm, specs=c(~rs, ~prop_type, ~rs:prop_type))
-pp_ddia_emm <- emmeans(pp_ddia_mm, specs=c(~rs, ~prop_type, ~rs:prop_type))
+ft1_seg_emm <- emmeans(ft1_seg_depth_mm, specs=c(~rs, ~prop_type, ~rs:prop_type))
+ft1_em_emm <- emmeans(ft1_em_depth_mm, specs=c(~rs, ~prop_type, ~rs:prop_type))
+ft1_bdia_emm <- emmeans(ft1_bdia_mm, specs=c(~rs, ~prop_type, ~rs:prop_type))
+ft1_ddia_emm <- emmeans(ft1_ddia_mm, specs=c(~rs, ~prop_type, ~rs:prop_type))
+
+# Ranef Variance
+ft1_seg_var <- as.data.frame(VarCorr(ft1_seg_depth_mm))
+ft1_em_var <- as.data.frame(VarCorr(ft1_em_depth_mm))
+ft1_bdia_var <- as.data.frame(VarCorr(ft1_bdia_mm))
+ft1_ddia_var <- as.data.frame(VarCorr(ft1_ddia_mm))
 
 ### List creation ###
 #####################
-aov_list = list(pp_seg_aov, pp_em_aov, pp_bdia_aov, pp_ddia_aov)
+aov_list = list(ft1_seg_aov, ft1_em_aov, ft1_bdia_aov, ft1_ddia_aov)
+var_list = list(ft1_seg_var, ft1_em_var, ft1_bdia_var, ft1_ddia_var)
 rs_cld_list = list(
-        cld(pp_seg_emm$`emmeans of rs`, Letters = letters, reversed = TRUE), 
-        cld(pp_em_emm$`emmeans of rs`, Letters = letters, reversed = TRUE), 
-        cld(pp_bdia_emm$`emmeans of rs`, Letters = letters, reversed = TRUE), 
-        cld(pp_ddia_emm$`emmeans of rs`, Letters = letters, reversed = TRUE)
+        cld(ft1_seg_emm$`emmeans of rs`, Letters = letters, reversed = TRUE), 
+        cld(ft1_em_emm$`emmeans of rs`, Letters = letters, reversed = TRUE), 
+        cld(ft1_bdia_emm$`emmeans of rs`, Letters = letters, reversed = TRUE), 
+        cld(ft1_ddia_emm$`emmeans of rs`, Letters = letters, reversed = TRUE)
 )
 prop_cld_list = list(
-        cld(pp_seg_emm$`emmeans of prop_type`, Letters = letters, reversed = TRUE), 
-        cld(pp_em_emm$`emmeans of prop_type`, Letters = letters, reversed = TRUE), 
-        cld(pp_bdia_emm$`emmeans of prop_type`, Letters = letters, reversed = TRUE), 
-        cld(pp_ddia_emm$`emmeans of prop_type`, Letters = letters, reversed = TRUE)
+        cld(ft1_seg_emm$`emmeans of prop_type`, Letters = letters, reversed = TRUE), 
+        cld(ft1_em_emm$`emmeans of prop_type`, Letters = letters, reversed = TRUE), 
+        cld(ft1_bdia_emm$`emmeans of prop_type`, Letters = letters, reversed = TRUE), 
+        cld(ft1_ddia_emm$`emmeans of prop_type`, Letters = letters, reversed = TRUE)
 )
 rs_prop_cld_list = list(
-        cld(pp_seg_emm$`emmeans of rs, prop_type`, Letters = letters, reversed = TRUE), 
-        cld(pp_em_emm$`emmeans of rs, prop_type`, Letters = letters, reversed = TRUE), 
-        cld(pp_bdia_emm$`emmeans of rs, prop_type`, Letters = letters, reversed = TRUE), 
-        cld(pp_ddia_emm$`emmeans of rs, prop_type`, Letters = letters, reversed = TRUE)
+        cld(ft1_seg_emm$`emmeans of rs, prop_type`, Letters = letters, reversed = TRUE), 
+        cld(ft1_em_emm$`emmeans of rs, prop_type`, Letters = letters, reversed = TRUE), 
+        cld(ft1_bdia_emm$`emmeans of rs, prop_type`, Letters = letters, reversed = TRUE), 
+        cld(ft1_ddia_emm$`emmeans of rs, prop_type`, Letters = letters, reversed = TRUE)
 )
 
 ### DF Construction ###
 name_vec <- c('seg_depth_cm', 'em_depth_cm', 'b_dia_mm', 'd_dia_mm')
 
-pp_rs_df <- data.frame('rs' = c('US-1516', 'US-812', 'US-897', 'US-942'))
-pp_rs_aov <- c('ANOVA')
-pp_prop_df <- data.frame('prop_type' = c('ct', 'mpg', 'sd'))
-pp_prop_aov <- c('ANOVA')
-pp_rs_prop_df <- data.frame('rs' = rep(c('US-1516', 'US-812', 'US-897', 'US-942'), each = 3),
+ft1_rs_df <- data.frame('rs' = c('US-1516', 'US-812', 'US-897', 'US-942'))
+ft1_rs_aov <- c('p-value')
+ft1_prop_df <- data.frame('prop_type' = c('ct', 'mpg', 'sd'))
+ft1_prop_aov <- c('p-value')
+ft1_rs_prop_df <- data.frame('rs' = rep(c('US-1516', 'US-812', 'US-897', 'US-942'), each = 3),
                             'prop_type' = rep(c('ct', 'mpg', 'sd'), times=4))
-pp_rs_prop_aov <- c('ANOVA', '')
+ft1_rs_prop_aov <- c('p-value', '')
+
+ft1_var_df <- data.frame('grp' = c('sys_id:block', 'block', 'Residual'))
 
 for (i in 1:length(rs_cld_list)) {
-        
-        # RS CLD
+        # Pull out data from the rs CLD
         tmp <- data.frame(rs_cld_list[[i]]) %>% 
                 mutate(mean_letter = paste(sprintf("%.4f", emmean), trimws(.group, 'both'), sep=' '))
-        pp_rs_df <- pp_rs_df %>%
+        ft1_rs_df <- ft1_rs_df %>%
                 left_join(tmp[,c(1, 8)], by='rs')
         p_value <- aov_list[[i]]$"Pr(>F)"[1]
-        pp_rs_aov <- c(pp_rs_aov, sprintf("%.4f", p_value))
+        ft1_rs_aov <- c(ft1_rs_aov, p_value)
 
         # Prop_type CLD
         tmp <- data.frame(prop_cld_list[[i]]) %>% 
                 mutate(mean_letter = paste(sprintf("%.4f", emmean), trimws(.group, 'both'), sep=' '))
-        pp_prop_df <- pp_prop_df %>%
+        ft1_prop_df <- ft1_prop_df %>%
                 left_join(tmp[,c(1, 8)], by='prop_type')
         p_value <- aov_list[[i]]$"Pr(>F)"[2]
-        pp_prop_aov <- c(pp_prop_aov, sprintf("%.4f", p_value))
+        ft1_prop_aov <- c(ft1_prop_aov, p_value)
         
         # RS:Prop_type CLD
         tmp <- data.frame(rs_prop_cld_list[[i]]) %>% 
                 mutate(mean_letter = paste(sprintf("%.4f", emmean), trimws(.group, 'both'), sep=' '))
-        
-        pp_rs_prop_df <- pp_rs_prop_df %>%
+        ft1_rs_prop_df <- ft1_rs_prop_df %>%
                 left_join(tmp[,c(1, 2, 9)], by=c('rs', 'prop_type'))
         p_value <- aov_list[[i]]$"Pr(>F)"[3]
-        pp_rs_prop_aov <- c(pp_rs_prop_aov, sprintf("%.4f", p_value))
+        ft1_rs_prop_aov <- c(ft1_rs_prop_aov, p_value)
+        
+        # Ranef variance
+        tmp <- data.frame(var_list[[i]]) %>% 
+                dplyr::select(grp, vcov)
+        ft1_var_df <- ft1_var_df %>% 
+                left_join(tmp, by='grp')
 }
-colnames(pp_rs_df)[2:5] <- name_vec
-colnames(pp_prop_df)[2:5] <- name_vec
-colnames(pp_rs_prop_df)[3:6] <- name_vec
+colnames(ft1_rs_df)[2:5] <- name_vec
+colnames(ft1_prop_df)[2:5] <- name_vec
+colnames(ft1_rs_prop_df)[3:6] <- name_vec
+colnames(ft1_var_df)[2:5] <- name_vec
 
-pp_ctsroots_rs_df <- rbind(pp_rs_df, pp_rs_aov)
-pp_ctsroots_prop_df <- rbind(pp_prop_df, pp_prop_aov)
-pp_ctsroots_rs_prop_df <- rbind(pp_rs_prop_df, pp_rs_prop_aov)
+ft1_ctsroots_rs_df <- rbind(ft1_rs_df, ft1_rs_aov)
+ft1_ctsroots_prop_df <- rbind(ft1_prop_df, ft1_prop_aov)
+ft1_ctsroots_rs_prop_df <- rbind(ft1_rs_prop_df, ft1_rs_prop_aov)
+
+write.csv(ft1_ctsroots_rs_df, '../../manuscripts/analysis_output_tables/ft1_rs_ctsroots_table.csv')
+write.csv(ft1_ctsroots_prop_df, '../../manuscripts/analysis_output_tables/ft1_prop_ctsroots_table.csv')
+write.csv(ft1_ctsroots_rs_prop_df, '../../manuscripts/analysis_output_tables/ft1_rsprop_ctsroots_table.csv')
+write.csv(ft1_var_df, '../../manuscripts/analysis_output_tables/ft1_ctsroots_variance_table.csv')
 ```
+
+
 
 # Tree Level Root Count Data
 In this section we grab some of the aggregated data for the roots and analyze it. Since each root was scored for various traits, such as 'broken' or 'lateral' we can rightly model the rate of incidence using logistic models. However, if we are interested in the total count of roots or segments, we will need to count the total number of roots and then analyse it using a Poisson glmer model. Since this is aggregated on the tree level (i.e. one observation per tree), we will still model this by tree, not by plot, but set the random effect to plot nested within block (1|block/plot_id).
-## PROP ADAIR
+## PROP ADAIR (FT2)
 ```{r prop-adair-tree-level-root-count-data}
-### PROP ADAIR ###
+### PROP ADAIR FT2 ###
 # Poisson models for total counts
-pa_nbranch_glmer <- glmer(
+ft2_nbranch_glmer <- glmer(
         n_branch ~ rs * prop_type + (1|block/plot_id), 
         data = pa_root_aggregated, 
         family="poisson", 
         control = glmerControl(optimizer = "bobyqa")
 )
-pa_nseg_glmer <- glmer(
+ft2_nseg_glmer <- glmer(
         n_seg ~ rs * prop_type + (1|block/plot_id), 
         data = pa_root_aggregated, 
         family="poisson", 
         control = glmerControl(optimizer = "bobyqa")
 )
 
+ggplot(pp_root_aggregated, aes(x=n_seg, y=n_branch))+
+        geom_point()
+
 # Anova 
-pa_nbranch_aov <- Anova(pa_nbranch_glmer)
-pa_nseg_aov <- Anova(pa_nseg_glmer)
+ft2_nbranch_aov <- Anova(ft2_nbranch_glmer)
+ft2_nseg_aov <- Anova(ft2_nseg_glmer)
 # Emmeans objects
-pa_nbranch_emm <- emmeans(pa_nbranch_glmer, specs=c(~rs, ~prop_type, ~rs:prop_type), type='response')
-pa_nseg_emm <- emmeans(pa_nseg_glmer, specs=c(~rs, ~prop_type, ~rs:prop_type), type='response')
+ft2_nbranch_emm <- emmeans(ft2_nbranch_glmer, specs=c(~rs, ~prop_type, ~rs:prop_type), type='response')
+ft2_nseg_emm <- emmeans(ft2_nseg_glmer, specs=c(~rs, ~prop_type, ~rs:prop_type), type='response')
 
 # AOV List
-aov_list = list(pa_nbranch_aov, pa_nseg_aov)
+aov_list = list(ft2_nbranch_aov, ft2_nseg_aov)
 # CLD Lists
 rs_cld_list = list(
-        cld(pa_nbranch_emm$`emmeans of rs`, Letters = letters, reversed = TRUE), 
-        cld(pa_nseg_emm$`emmeans of rs`, Letters = letters, reversed = TRUE)
+        cld(ft2_nbranch_emm$`emmeans of rs`, Letters = letters, reversed = TRUE), 
+        cld(ft2_nseg_emm$`emmeans of rs`, Letters = letters, reversed = TRUE)
 )
 
 prop_cld_list = list(
-        cld(pa_nbranch_emm$`emmeans of prop_type`, Letters = letters, reversed = TRUE),
-        cld(pa_nseg_emm$`emmeans of prop_type`, Letters = letters, reversed = TRUE)
+        cld(ft2_nbranch_emm$`emmeans of prop_type`, Letters = letters, reversed = TRUE),
+        cld(ft2_nseg_emm$`emmeans of prop_type`, Letters = letters, reversed = TRUE)
 )
 
 rs_prop_cld_list = list(
-        cld(pa_nbranch_emm$`emmeans of rs, prop_type`, Letters = letters, reversed = TRUE),
-        cld(pa_nseg_emm$`emmeans of rs, prop_type`, Letters = letters, reversed = TRUE)
+        cld(ft2_nbranch_emm$`emmeans of rs, prop_type`, Letters = letters, reversed = TRUE),
+        cld(ft2_nseg_emm$`emmeans of rs, prop_type`, Letters = letters, reversed = TRUE)
 )
+
+var_list = list(as.data.frame(VarCorr(ft2_nbranch_glmer)), as.data.frame(VarCorr(ft2_nseg_glmer)))
 
 # Data frame construction
 name_vec <- c('n_branches', 'n_seg')
-pa_rs_df <- data.frame('rs' = c('US-1516', 'US-812', 'US-897', 'US-942'))
-pa_rs_aov <- c('ANOVA')
-pa_prop_df <- data.frame('prop_type' = c('ct', 'mpg', 'sd'))
-pa_prop_aov <- c('ANOVA')
-pa_rs_prop_df <- data.frame('rs' = rep(c('US-1516', 'US-812', 'US-897', 'US-942'), each = 3),
+ft2_rs_df <- data.frame('rs' = c('US-1516', 'US-812', 'US-897', 'US-942'))
+ft2_rs_aov <- c('p-value')
+ft2_prop_df <- data.frame('prop_type' = c('ct', 'mpg', 'sd'))
+ft2_prop_aov <- c('p-value')
+ft2_rs_prop_df <- data.frame('rs' = rep(c('US-1516', 'US-812', 'US-897', 'US-942'), each = 3),
                             'prop_type' = rep(c('ct', 'mpg', 'sd'), times=4))
-pa_rs_prop_aov <- c('ANOVA', '')
+ft2_rs_prop_aov <- c('p-value', '')
+
+ft2_var_df <- data.frame('grp' = c('plot_id:block', 'block'))
 
 for (i in 1:length(rs_cld_list)) {
 
         tmp <- data.frame(rs_cld_list[[i]]) %>% 
                 mutate(mean_letter = paste(sprintf("%.4f", rate), trimws(.group, 'both'), sep=' '))
-        pa_rs_df <- pa_rs_df %>%
+        ft2_rs_df <- ft2_rs_df %>%
                 left_join(tmp[,c(1, 8)], by='rs')
         p_value <- aov_list[[i]]$"Pr(>Chisq)"[1]
-        pa_rs_aov <- c(pa_rs_aov, sprintf("%.4f", p_value))
+        ft2_rs_aov <- c(ft2_rs_aov, p_value)
 
         
         tmp <- data.frame(prop_cld_list[[i]]) %>% 
                 mutate(mean_letter = paste(sprintf("%.4f", rate), trimws(.group, 'both'), sep=' '))
-        pa_prop_df <- pa_prop_df %>%
+        ft2_prop_df <- ft2_prop_df %>%
                 left_join(tmp[,c(1, 8)], by='prop_type')
         p_value <- aov_list[[i]]$"Pr(>Chisq)"[2]
-        pa_prop_aov <- c(pa_prop_aov, sprintf("%.4f", p_value))
+        ft2_prop_aov <- c(ft2_prop_aov, p_value)
         
         tmp <- data.frame(rs_prop_cld_list[[i]]) %>% 
                 mutate(mean_letter = paste(sprintf("%.4f", rate), trimws(.group, 'both'), sep=' '))
         
-        pa_rs_prop_df <- pa_rs_prop_df %>%
+        ft2_rs_prop_df <- ft2_rs_prop_df %>%
                 left_join(tmp[,c(1, 2, 9)], by=c('rs', 'prop_type'))
         p_value <- aov_list[[i]]$"Pr(>Chisq)"[3]
-        pa_rs_prop_aov <- c(pa_rs_prop_aov, sprintf("%.4f", p_value))
+        ft2_rs_prop_aov <- c(ft2_rs_prop_aov, p_value)
+        
+        tmp <- var_list[[i]] %>% 
+                dplyr::select(grp, vcov)
+        
+        ft2_var_df <- ft2_var_df %>% 
+                left_join(tmp, by='grp')
 }
-colnames(pa_rs_df)[2:3] <- name_vec
-colnames(pa_prop_df)[2:3] <- name_vec
-colnames(pa_rs_prop_df)[3:4] <- name_vec
+colnames(ft2_rs_df)[2:3] <- name_vec
+colnames(ft2_prop_df)[2:3] <- name_vec
+colnames(ft2_rs_prop_df)[3:4] <- name_vec
+colnames(ft2_var_df)[2:3] <- name_vec
 
-pa_counts_rs_df <- rbind(pa_rs_df, pa_rs_aov)
-pa_counts_prop_df <- rbind(pa_prop_df, pa_prop_aov)
-pa_counts_rs_prop_df <- rbind(pa_rs_prop_df, pa_rs_prop_aov)
+ft2_counts_rs_df <- rbind(ft2_rs_df, ft2_rs_aov)
+ft2_counts_prop_df <- rbind(ft2_prop_df, ft2_prop_aov)
+ft2_counts_rs_prop_df <- rbind(ft2_rs_prop_df, ft2_rs_prop_aov)
+
+write.csv(ft2_counts_rs_df, '../../manuscripts/analysis_output_tables/ft2_root_counts_rs_table.csv')
+write.csv(ft2_counts_prop_df, '../../manuscripts/analysis_output_tables/ft2_root_counts_prop_table.csv')
+write.csv(ft2_counts_rs_prop_df, '../../manuscripts/analysis_output_tables/ft2_root_counts_rsprop_table.csv')
+write.csv(ft2_var_df, '../../manuscripts/analysis_output_tables/ft2_root_counts_variance_table.csv')
 
 ```
 
-## PROP PICOS
+## PROP PICOS (FT1)
 ```{r prop-picos-tree-level-root-count-data}
-### PROP PICOS ###
+### PROP PICOS (FT1) ###
 # Poisson models for total counts
-pp_nbranch_glmer <- glmer(
+ft1_nbranch_glmer <- glmer(
         n_branch ~ rs * prop_type + (1|block/plot_id), 
         data = pp_root_aggregated, 
         family="poisson", 
         control = glmerControl(optimizer = "bobyqa")
 )
-pp_nseg_glmer <- glmer(
+ft1_nseg_glmer <- glmer(
         n_seg ~ rs * prop_type + (1|block/plot_id), 
         data = pp_root_aggregated, 
         family="poisson", 
         control = glmerControl(optimizer = "bobyqa")
 )
+
 # Anova 
-pp_nbranch_aov <- Anova(pp_nbranch_glmer)
-pp_nseg_aov <- Anova(pp_nseg_glmer)
+ft1_nbranch_aov <- Anova(ft1_nbranch_glmer)
+ft1_nseg_aov <- Anova(ft1_nseg_glmer)
 # Emmeans objects
-pp_nbranch_emm <- emmeans(pp_nbranch_glmer, specs=c(~rs, ~prop_type, ~rs:prop_type), type='response')
-pp_nseg_emm <- emmeans(pp_nseg_glmer, specs=c(~rs, ~prop_type, ~rs:prop_type), type='response')
+ft1_nbranch_emm <- emmeans(ft1_nbranch_glmer, specs=c(~rs, ~prop_type, ~rs:prop_type), type='response')
+ft1_nseg_emm <- emmeans(ft1_nseg_glmer, specs=c(~rs, ~prop_type, ~rs:prop_type), type='response')
 
 # AOV List
-aov_list = list(pp_nbranch_aov, pp_nseg_aov)
+aov_list = list(ft1_nbranch_aov, ft1_nseg_aov)
 # CLD Lists
 rs_cld_list = list(
-        cld(pp_nbranch_emm$`emmeans of rs`, Letters = letters, reversed = TRUE), 
-        cld(pp_nseg_emm$`emmeans of rs`, Letters = letters, reversed = TRUE)
+        cld(ft1_nbranch_emm$`emmeans of rs`, Letters = letters, reversed = TRUE), 
+        cld(ft1_nseg_emm$`emmeans of rs`, Letters = letters, reversed = TRUE)
 )
 
 prop_cld_list = list(
-        cld(pp_nbranch_emm$`emmeans of prop_type`, Letters = letters, reversed = TRUE),
-        cld(pp_nseg_emm$`emmeans of prop_type`, Letters = letters, reversed = TRUE)
+        cld(ft1_nbranch_emm$`emmeans of prop_type`, Letters = letters, reversed = TRUE),
+        cld(ft1_nseg_emm$`emmeans of prop_type`, Letters = letters, reversed = TRUE)
 )
 
 rs_prop_cld_list = list(
-        cld(pp_nbranch_emm$`emmeans of rs, prop_type`, Letters = letters, reversed = TRUE),
-        cld(pp_nseg_emm$`emmeans of rs, prop_type`, Letters = letters, reversed = TRUE)
+        cld(ft1_nbranch_emm$`emmeans of rs, prop_type`, Letters = letters, reversed = TRUE),
+        cld(ft1_nseg_emm$`emmeans of rs, prop_type`, Letters = letters, reversed = TRUE)
 )
+
+var_list = list(as.data.frame(VarCorr(ft1_nbranch_glmer)), as.data.frame(VarCorr(ft1_nseg_glmer)))
 
 # Data frame construction
 name_vec <- c('n_branches', 'n_seg')
-pp_rs_df <- data.frame('rs' = c('US-1516', 'US-812', 'US-897', 'US-942'))
-pp_rs_aov <- c('ANOVA')
-pp_prop_df <- data.frame('prop_type' = c('ct', 'mpg', 'sd'))
-pp_prop_aov <- c('ANOVA')
-pp_rs_prop_df <- data.frame('rs' = rep(c('US-1516', 'US-812', 'US-897', 'US-942'), each = 3),
+ft1_rs_df <- data.frame('rs' = c('US-1516', 'US-812', 'US-897', 'US-942'))
+ft1_rs_aov <- c('p-value')
+ft1_prop_df <- data.frame('prop_type' = c('ct', 'mpg', 'sd'))
+ft1_prop_aov <- c('p-value')
+ft1_rs_prop_df <- data.frame('rs' = rep(c('US-1516', 'US-812', 'US-897', 'US-942'), each = 3),
                             'prop_type' = rep(c('ct', 'mpg', 'sd'), times=4))
-pp_rs_prop_aov <- c('ANOVA', '')
+ft1_rs_prop_aov <- c('p-value', '')
+
+ft1_var_df <- data.frame('grp' = c('plot_id:block', 'block'))
 
 for (i in 1:length(rs_cld_list)) {
 
         tmp <- data.frame(rs_cld_list[[i]]) %>% 
                 mutate(mean_letter = paste(sprintf("%.4f", rate), trimws(.group, 'both'), sep=' '))
-        pp_rs_df <- pp_rs_df %>%
+        ft1_rs_df <- ft1_rs_df %>%
                 left_join(tmp[,c(1, 8)], by='rs')
         p_value <- aov_list[[i]]$"Pr(>Chisq)"[1]
-        pp_rs_aov <- c(pp_rs_aov, sprintf("%.4f", p_value))
+        ft1_rs_aov <- c(ft1_rs_aov, p_value)
 
         
         tmp <- data.frame(prop_cld_list[[i]]) %>% 
                 mutate(mean_letter = paste(sprintf("%.4f", rate), trimws(.group, 'both'), sep=' '))
-        pp_prop_df <- pp_prop_df %>%
+        ft1_prop_df <- ft1_prop_df %>%
                 left_join(tmp[,c(1, 8)], by='prop_type')
         p_value <- aov_list[[i]]$"Pr(>Chisq)"[2]
-        pp_prop_aov <- c(pp_prop_aov, sprintf("%.4f", p_value))
+        ft1_prop_aov <- c(ft1_prop_aov, p_value)
         
         tmp <- data.frame(rs_prop_cld_list[[i]]) %>% 
                 mutate(mean_letter = paste(sprintf("%.4f", rate), trimws(.group, 'both'), sep=' '))
         
-        pp_rs_prop_df <- pp_rs_prop_df %>%
+        ft1_rs_prop_df <- ft1_rs_prop_df %>%
                 left_join(tmp[,c(1, 2, 9)], by=c('rs', 'prop_type'))
         p_value <- aov_list[[i]]$"Pr(>Chisq)"[3]
-        pp_rs_prop_aov <- c(pp_rs_prop_aov, sprintf("%.4f", p_value))
+        ft1_rs_prop_aov <- c(ft1_rs_prop_aov, p_value)
+        
+        tmp <- var_list[[i]] %>% 
+                dplyr::select(grp, vcov)
+        
+        ft1_var_df <- ft1_var_df %>% 
+                left_join(tmp, by='grp')
 }
-colnames(pp_rs_df)[2:3] <- name_vec
-colnames(pp_prop_df)[2:3] <- name_vec
-colnames(pp_rs_prop_df)[3:4] <- name_vec
+colnames(ft1_rs_df)[2:3] <- name_vec
+colnames(ft1_prop_df)[2:3] <- name_vec
+colnames(ft1_rs_prop_df)[3:4] <- name_vec
+colnames(ft1_var_df)[2:3] <- name_vec
 
-pp_counts_rs_df <- rbind(pp_rs_df, pp_rs_aov)
-pp_counts_prop_df <- rbind(pp_prop_df, pp_prop_aov)
-pp_counts_rs_prop_df <- rbind(pp_rs_prop_df, pp_rs_prop_aov)
+ft1_counts_rs_df <- rbind(ft1_rs_df, ft1_rs_aov)
+ft1_counts_prop_df <- rbind(ft1_prop_df, ft1_prop_aov)
+ft1_counts_rs_prop_df <- rbind(ft1_rs_prop_df, ft1_rs_prop_aov)
+
+write.csv(ft1_counts_rs_df, '../../manuscripts/analysis_output_tables/ft1_root_counts_rs_table.csv')
+write.csv(ft1_counts_prop_df, '../../manuscripts/analysis_output_tables/ft1_root_counts_prop_table.csv')
+write.csv(ft1_counts_rs_prop_df, '../../manuscripts/analysis_output_tables/ft1_root_counts_rsprop_table.csv')
+write.csv(ft1_var_df, '../../manuscripts/analysis_output_tables/ft1_root_counts_variance_table.csv')
 ```
+
 
 # Plot Level Tree Growth Data and Analysis
-In this section we will look at the continuous data that is properly collected on each tree. These are growth measurements such as the tree height, and rootstock trunk circumference, etc. These data are averaged across plots and then the data aree analyzed using regular linear mixed effects models (lmer) with random effects as (1|block).
+In this section we will look at the continuous data that is properly collected on each tree. These are growth measurements such as the tree height, and rootstock trunk circumference, etc. These data are averaged across plots and then the data area analyzed using regular linear mixed effects models (lmer) with random effects as (1|block).
 
-## PROP ADAIR
+## PROP ADAIR (FT2)
 ```{r prop-adair-tree-growth}
-### PROP ADAIR ###
+### PROP ADAIR (FT2) ###
 # Lmer models
-pa_rs_mm <- lmer(rs_cm ~ rs * prop_type + (1|block), data=pa_tree_agg)
-pa_sc_mm <- lmer(sc_cm ~ rs * prop_type + (1|block), data=pa_tree_agg)
-pa_height_mm <- lmer(height_cm ~ rs * prop_type + (1|block), data=pa_tree_agg)
-pa_canvol_mm <- lmer(can_vol_m3 ~ rs * prop_type + (1|block), data=pa_tree_agg)
-pa_rssc_mm <- lmer(rs_sc_ratio ~ rs * prop_type + (1|block), data=pa_tree_agg)
-pa_crowndepth_mm <- lmer(crown_depth_cm ~ rs * prop_type + (1|block), data=pa_tree_agg)
-pa_stumpdepth_mm <- lmer(stump_depth_cm ~ rs * prop_type + (1|block), data=pa_tree_agg)
-pa_stumpweight_mm <- lmer(stump_weight_g ~ rs * prop_type + (1|block), data=pa_tree_agg)
-pa_stumpdia_mm <- lmer(stump_dia_mm ~ rs * prop_type + (1|block), data=pa_tree_agg)
-pa_lai_mm <- lmer(LAI ~ rs * prop_type + (1|block), data=pa_tree_agg)
-pa_di_mm <- lmer(di ~ rs * prop_type + (1|block), data=pa_tree_agg)
-pa_thick_mm <- lmer(thick ~ rs * prop_type + (1|block), data=pa_tree_agg)
-pa_color_mm <- lmer(color ~ rs * prop_type + (1|block), data=pa_tree_agg)
-pa_soildens_mm <- lmer(soil_dens_kpa ~ rs * prop_type + (1|block), data=pa_tree_agg)
-pa_soilvwc_mm <- lmer(soil_vmc_pct ~ rs * prop_type + (1|block), data=pa_tree_agg)
-# ANOVA objects
-pa_rs_aov <- anova(pa_rs_mm)
-pa_sc_aov <- anova(pa_sc_mm)
-pa_height_aov <- anova(pa_height_mm)
-pa_canvol_aov <- anova(pa_canvol_mm)
-pa_rssc_aov <- anova(pa_rssc_mm)
-pa_crowndepth_aov <- anova(pa_crowndepth_mm)
-pa_stumpdepth_aov <- anova(pa_stumpdepth_mm)
-pa_stumpweight_aov <- anova(pa_stumpweight_mm)
-pa_stumpdia_aov <- anova(pa_stumpdia_mm)
-pa_lai_aov <- anova(pa_lai_mm)
-pa_di_aov <- anova(pa_di_mm)
-pa_thick_aov <- anova(pa_thick_mm)
-pa_color_aov <- anova(pa_color_mm)
-pa_soildens_aov <- anova(pa_soildens_mm)
-pa_soilvwc_aov <- anova(pa_soilvwc_mm)
-# emmeans
-pa_rs_emm <- emmeans(pa_rs_mm, specs=c(~rs, ~prop_type, ~rs:prop_type))
-pa_sc_emm <- emmeans(pa_sc_mm, specs=c(~rs, ~prop_type, ~rs:prop_type))
-pa_height_emm <- emmeans(pa_height_mm, specs=c(~rs, ~prop_type, ~rs:prop_type))
-pa_canvol_emm <- emmeans(pa_canvol_mm, specs=c(~rs, ~prop_type, ~rs:prop_type))
-pa_rssc_emm <- emmeans(pa_rssc_mm, specs=c(~rs, ~prop_type, ~rs:prop_type))
-pa_crowndepth_emm <- emmeans(pa_crowndepth_mm, specs=c(~rs, ~prop_type, ~rs:prop_type))
-pa_stumpdepth_emm <- emmeans(pa_stumpdepth_mm, specs=c(~rs, ~prop_type, ~rs:prop_type))
-pa_stumpweight_emm <- emmeans(pa_stumpweight_mm, specs=c(~rs, ~prop_type, ~rs:prop_type))
-pa_stumpdia_emm <- emmeans(pa_stumpdia_mm, specs=c(~rs, ~prop_type, ~rs:prop_type))
-pa_lai_emm <- emmeans(pa_lai_mm, specs=c(~rs, ~prop_type, ~rs:prop_type))
-pa_di_emm <- emmeans(pa_di_mm, specs=c(~rs, ~prop_type, ~rs:prop_type))
-pa_thick_emm <- emmeans(pa_thick_mm, specs=c(~rs, ~prop_type, ~rs:prop_type))
-pa_color_emm <- emmeans(pa_color_mm, specs=c(~rs, ~prop_type, ~rs:prop_type))
-pa_soildens_emm <- emmeans(pa_soildens_mm, specs=c(~rs, ~prop_type, ~rs:prop_type))
-pa_soilvwc_emm <- emmeans(pa_soilvwc_mm, specs=c(~rs, ~prop_type, ~rs:prop_type))
-# AOV List
-aov_list = list(pa_rs_aov, pa_sc_aov, pa_height_aov, pa_canvol_aov, pa_rssc_aov, pa_crowndepth_aov, pa_stumpdepth_aov, pa_stumpweight_aov, pa_stumpdia_aov,
-                pa_lai_aov, pa_di_aov, pa_thick_aov, pa_color_aov, pa_soildens_aov, pa_soilvwc_aov)
-# CLD Lists
-rs_cld_list = list(
-        cld(pa_rs_emm$`emmeans of rs`, Letters = letters, reversed = TRUE), 
-        cld(pa_sc_emm$`emmeans of rs`, Letters = letters, reversed = TRUE),
-        cld(pa_height_emm$`emmeans of rs`, Letters = letters, reversed = TRUE),
-        cld(pa_canvol_emm$`emmeans of rs`, Letters = letters, reversed = TRUE),
-        cld(pa_rssc_emm$`emmeans of rs`, Letters = letters, reversed = TRUE),
-        cld(pa_crowndepth_emm$`emmeans of rs`, Letters = letters, reversed = TRUE),
-        cld(pa_stumpdepth_emm$`emmeans of rs`, Letters = letters, reversed = TRUE),
-        cld(pa_stumpweight_emm$`emmeans of rs`, Letters = letters, reversed = TRUE),
-        cld(pa_stumpdia_emm$`emmeans of rs`, Letters = letters, reversed = TRUE),
-        cld(pa_lai_emm$`emmeans of rs`, Letters = letters, reversed = TRUE),
-        cld(pa_di_emm$`emmeans of rs`, Letters = letters, reversed = TRUE),
-        cld(pa_thick_emm$`emmeans of rs`, Letters = letters, reversed = TRUE),
-        cld(pa_color_emm$`emmeans of rs`, Letters = letters, reversed = TRUE),
-        cld(pa_soildens_emm$`emmeans of rs`, Letters = letters, reversed = TRUE),
-        cld(pa_soilvwc_emm$`emmeans of rs`, Letters = letters, reversed = TRUE)
-)
 
-prop_cld_list = list(
-        cld(pa_rs_emm$`emmeans of prop_type`, Letter = letters, reversed = TRUE), 
-        cld(pa_sc_emm$`emmeans of prop_type`, Letters = letters, reversed = TRUE),
-        cld(pa_height_emm$`emmeans of prop_type`, Letters = letters, reversed = TRUE),
-        cld(pa_canvol_emm$`emmeans of prop_type`, Letters = letters, reversed = TRUE),
-        cld(pa_rssc_emm$`emmeans of prop_type`, Letters = letters, reversed = TRUE),
-        cld(pa_crowndepth_emm$`emmeans of prop_type`, Letters = letters, reversed = TRUE),
-        cld(pa_stumpdepth_emm$`emmeans of prop_type`, Letters = letters, reversed = TRUE),
-        cld(pa_stumpweight_emm$`emmeans of prop_type`, Letters = letters, reversed = TRUE),
-        cld(pa_stumpdia_emm$`emmeans of prop_type`, Letters = letters, reversed = TRUE),
-        cld(pa_lai_emm$`emmeans of prop_type`, Letters = letters, reversed = TRUE),
-        cld(pa_di_emm$`emmeans of prop_type`, Letters = letters, reversed = TRUE),
-        cld(pa_thick_emm$`emmeans of prop_type`, Letters = letters, reversed = TRUE),
-        cld(pa_color_emm$`emmeans of prop_type`, Letters = letters, reversed = TRUE),
-        cld(pa_soildens_emm$`emmeans of prop_type`, Letters = letters, reversed = TRUE),
-        cld(pa_soilvwc_emm$`emmeans of prop_type`, Letters = letters, reversed = TRUE)
-)
+columns <- c("rs_cm", 'sc_cm', 'height_cm', "can_vol_m3", "sc_rs_ratio", "crown_depth_cm", "stump_depth_cm", "drp_cm", "stump_weight_g", "stump_dia_mm", "LAI", "di", "thick", "color", "soil_dens_kpa", "soil_vmc_pct", "depth_diff")
 
-rs_prop_cld_list = list(
-        cld(pa_rs_emm$`emmeans of rs, prop_type`, Letters = letters, reversed = TRUE), 
-        cld(pa_sc_emm$`emmeans of rs, prop_type`, Letters = letters, reversed = TRUE),
-        cld(pa_height_emm$`emmeans of rs, prop_type`, Letters = letters, reversed = TRUE),
-        cld(pa_canvol_emm$`emmeans of rs, prop_type`, Letters = letters, reversed = TRUE),
-        cld(pa_rssc_emm$`emmeans of rs, prop_type`, Letters = letters, reversed = TRUE),
-        cld(pa_crowndepth_emm$`emmeans of rs, prop_type`, Letters = letters, reversed = TRUE),
-        cld(pa_stumpdepth_emm$`emmeans of rs, prop_type`, Letters = letters, reversed = TRUE),
-        cld(pa_stumpweight_emm$`emmeans of rs, prop_type`, Letters = letters, reversed = TRUE),
-        cld(pa_stumpdia_emm$`emmeans of rs, prop_type`, Letters = letters, reversed = TRUE),
-        cld(pa_lai_emm$`emmeans of rs, prop_type`, Letters = letters, reversed = TRUE),
-        cld(pa_di_emm$`emmeans of rs, prop_type`, Letters = letters, reversed = TRUE),
-        cld(pa_thick_emm$`emmeans of rs, prop_type`, Letters = letters, reversed = TRUE),
-        cld(pa_color_emm$`emmeans of rs, prop_type`, Letters = letters, reversed = TRUE),
-        cld(pa_soildens_emm$`emmeans of rs, prop_type`, Letters = letters, reversed = TRUE),
-        cld(pa_soilvwc_emm$`emmeans of rs, prop_type`, Letters = letters, reversed = TRUE)
-)
+name_vec <- c("RS Circ. (cm)", "SC Circ. (cm)", "Tree Height (cm)", "Tree Canopy Volume (m3)", "SC/RS", "Crown Depth (cm)", "Stump Depth (cm)", "Root Plate Depth (cm)", "Stump Mass (g)", "Stump Dia. (mm)", "LAI", "Disease Index", "Canopy Thickness", "Canopy Color", "Soil Density (kPa)", "Soil VMC (%)", "Crown-Stump Depth Difference (cm)")
 
-# Data frame construction
-name_vec <- c('rs_cir_cm', 'sc_cir_cm', 'tree_height_cm', 'tree_can_vol_m3', 'rs_sc_ratio', 'crown_depth_cm', 'stump_depth_cm',
-              'stump_mass_g', 'stump_dia_mm', 'LAI', 'disease_index', 'thickness_rating', 'color_rating', 'plot_soil_density_kpa', 'plot_soil_VMC_pct')
-pa_rs_df <- data.frame('rs' = c('US-1516', 'US-812', 'US-897', 'US-942'))
-pa_rs_aov <- c('ANOVA')
-pa_prop_df <- data.frame('prop_type' = c('ct', 'mpg', 'sd'))
-pa_prop_aov <- c('ANOVA')
+ft2_rs_df <- data.frame('rs' = c('US-1516', 'US-812', 'US-897', 'US-942'))
+ft2_prop_df <- data.frame('prop_type' = c('ct', 'mpg', 'sd'))
+ft2_rsprop_df <- data.frame('rs' = rep(c('US-1516', 'US-812', 'US-897', 'US-942'), each=3),
+                            'prop_type' = rep(c('ct', 'mpg', 'sd'), times=4))
+var_df <- data.frame('var' = c('block', 'Residual'))
 
-for (i in 1:length(rs_cld_list)) {
+ft2_rs_pvalue <- c('p-value')
+ft2_prop_pvalue <- c('p-value')
+ft2_rsprop_pvalue <- c('p-value', '')
 
-        tmp <- data.frame(rs_cld_list[[i]]) %>% 
-                mutate(mean_letter = paste(sprintf("%.4f", emmean), trimws(.group, 'both'), sep=' '))
-        pa_rs_df <- pa_rs_df %>%
-                left_join(tmp[,c(1, 8)], by='rs')
-        p_value <- aov_list[[i]]$"Pr(>F)"[1]
-        pa_rs_aov <- c(pa_rs_aov, sprintf("%.4f", p_value))
-
+for (trait in columns) {
+        # Construct formulae
+        f <- paste(trait, " ~ rs * prop_type + (1|block)", sep="")
         
-        tmp <- data.frame(prop_cld_list[[i]]) %>% 
-                mutate(mean_letter = paste(sprintf("%.4f", emmean), trimws(.group, 'both'), sep=' '))
-        pa_prop_df <- pa_prop_df %>%
-                left_join(tmp[,c(1, 8)], by='prop_type')
-        p_value <- aov_list[[i]]$"Pr(>F)"[2]
-        pa_prop_aov <- c(pa_prop_aov, sprintf("%.4f", p_value))
-}
-colnames(pa_rs_df)[2:16] <- name_vec
-colnames(pa_prop_df)[2:16] <- name_vec
+        # lmer model
+        lmer_model <- lmer(f, data=pa_tree_agg)
+        
+        # aov object
+        aov_obj <- anova(lmer_model)
+        
+        # var object
+        ranefvar <- as.data.frame(VarCorr(lmer_model)) %>% 
+                dplyr::select(grp, vcov)
+        
+        var_df <- var_df %>% 
+                left_join(ranefvar, by=join_by(var==grp))
+        
+        # emmeans object
+        emm <- emmeans(lmer_model, spec=c(~rs, ~prop_type, ~rs:prop_type))
+        
+        # # CLD objects
+        rs_cld <- cld(emm$`emmeans of rs`, reversed=TRUE, Letters = letters)
+        prop_cld <- cld(emm$`emmeans of prop_type`, reversed=TRUE, Letters = letters)
+        rsprop_cld <- cld(emm$`emmeans of rs, prop_type`, reversed=TRUE, Letters = letters)
+        
+        tmp <- data.frame(rs_cld) %>%
+                mutate(mean_letter = paste(sprintf("%.3f", emmean), trimws(.group, 'both'), sep=' '))
+        ft2_rs_df <- ft2_rs_df %>%
+                left_join(tmp[,c(1, 8)], by='rs')
 
-pa_growth_rs_df <- rbind(pa_rs_df, pa_rs_aov)
-pa_growth_prop_df <- rbind(pa_prop_df, pa_prop_aov)
+        tmp <- data.frame(prop_cld) %>%
+                mutate(mean_letter = paste(sprintf("%.3f", emmean), trimws(.group, 'both'), sep=' '))
+        ft2_prop_df <- ft2_prop_df %>%
+                left_join(tmp[,c(1, 8)], by='prop_type')
+
+        tmp <- data.frame(rsprop_cld) %>%
+                mutate(mean_letter = paste(sprintf("%.3f", emmean), trimws(.group, 'both'), sep=' '))
+        ft2_rsprop_df <- ft2_rsprop_df %>%
+                left_join(tmp[,c(1, 2, 9)], by=c('rs', 'prop_type'))
+        
+        ft2_rs_pvalue <- c(ft2_rs_pvalue, aov_obj$`Pr(>F)`[1])
+        ft2_prop_pvalue <- c(ft2_prop_pvalue, aov_obj$`Pr(>F)`[2])
+        ft2_rsprop_pvalue <- c(ft2_rsprop_pvalue, aov_obj$`Pr(>F)`[3])
+        
+}
+
+colnames(ft2_rs_df)[2:18] <- name_vec
+colnames(ft2_prop_df)[2:18] <- name_vec
+colnames(ft2_rsprop_df)[3:19] <- name_vec
+colnames(var_df)[2:18] <- name_vec
+
+ft2_rs_df <- rbind(ft2_rs_df, ft2_rs_pvalue)
+ft2_prop_df <- rbind(ft2_prop_df, ft2_prop_pvalue)
+ft2_rsprop_df <- rbind(ft2_rsprop_df, ft2_rsprop_pvalue)
+
+write.csv(ft2_rs_df, '../../manuscripts/analysis_output_tables/ft2_tree_growth_rs_table.csv')
+write.csv(ft2_prop_df, '../../manuscripts/analysis_output_tables/ft2_tree_growth_prop_table.csv')
+write.csv(ft2_rsprop_df, '../../manuscripts/analysis_output_tables/ft2_tree_growth_rsprop_table.csv')
+write.csv(var_df, '../../manuscripts/analysis_output_tables/ft2_tree_growth_variance_table.csv')
 ```
 
-## PROP PICOS
+## PROP PICOS (FT1)
 ```{r prop-picos-tree-growth}
-### PROP PICOS ###
+### PROP PICOS (FT1) ###
 # Lmer models
-pp_rs_mm <- lmer(rs_cm ~ rs * prop_type + (1|block), data=pp_tree_agg)
-pp_sc_mm <- lmer(sc_cm ~ rs * prop_type + (1|block), data=pp_tree_agg)
-pp_height_mm <- lmer(height_cm ~ rs * prop_type + (1|block), data=pp_tree_agg)
-pp_canvol_mm <- lmer(can_vol_m3 ~ rs * prop_type + (1|block), data=pp_tree_agg)
-pp_rssc_mm <- lmer(rs_sc_ratio ~ rs * prop_type + (1|block), data=pp_tree_agg)
-pp_crowndepth_mm <- lmer(crown_depth_cm ~ rs * prop_type + (1|block), data=pp_tree_agg)
-pp_stumpdepth_mm <- lmer(stump_depth_cm ~ rs * prop_type + (1|block), data=pp_tree_agg)
-pp_stumpweight_mm <- lmer(stump_weight_g ~ rs * prop_type + (1|block), data=pp_tree_agg)
-pp_stumpdia_mm <- lmer(stump_dia_mm ~ rs * prop_type + (1|block), data=pp_tree_agg)
-pp_lai_mm <- lmer(LAI ~ rs * prop_type + (1|block), data=pp_tree_agg)
-pp_di_mm <- lmer(di ~ rs * prop_type + (1|block), data=pp_tree_agg)
-pp_thick_mm <- lmer(thick ~ rs * prop_type + (1|block), data=pp_tree_agg)
-pp_color_mm <- lmer(color ~ rs * prop_type + (1|block), data=pp_tree_agg)
-pp_soildens_mm <- lmer(soil_dens_kpa ~ rs * prop_type + (1|block), data=pp_tree_agg)
-pp_soilvwc_mm <- lmer(soil_vmc_pct ~ rs * prop_type + (1|block), data=pp_tree_agg)
 
-# ANOVA objects
-pp_rs_aov <- anova(pp_rs_mm)
-pp_sc_aov <- anova(pp_sc_mm)
-pp_height_aov <- anova(pp_height_mm)
-pp_canvol_aov <- anova(pp_canvol_mm)
-pp_rssc_aov <- anova(pp_rssc_mm)
-pp_crowndepth_aov <- anova(pp_crowndepth_mm)
-pp_stumpdepth_aov <- anova(pp_stumpdepth_mm)
-pp_stumpweight_aov <- anova(pp_stumpweight_mm)
-pp_stumpdia_aov <- anova(pp_stumpdia_mm)
-pp_lai_aov <- anova(pp_lai_mm)
-pp_di_aov <- anova(pp_di_mm)
-pp_thick_aov <- anova(pp_thick_mm)
-pp_color_aov <- anova(pp_color_mm)
-pp_soildens_aov <- anova(pp_soildens_mm)
-pp_soilvwc_aov <- anova(pp_soilvwc_mm)
-# emmeans
-pp_rs_emm <- emmeans(pp_rs_mm, specs=c(~rs, ~prop_type, ~rs:prop_type))
-pp_sc_emm <- emmeans(pp_sc_mm, specs=c(~rs, ~prop_type, ~rs:prop_type))
-pp_height_emm <- emmeans(pp_height_mm, specs=c(~rs, ~prop_type, ~rs:prop_type))
-pp_canvol_emm <- emmeans(pp_canvol_mm, specs=c(~rs, ~prop_type, ~rs:prop_type))
-pp_rssc_emm <- emmeans(pp_rssc_mm, specs=c(~rs, ~prop_type, ~rs:prop_type))
-pp_crowndepth_emm <- emmeans(pp_crowndepth_mm, specs=c(~rs, ~prop_type, ~rs:prop_type))
-pp_stumpdepth_emm <- emmeans(pp_stumpdepth_mm, specs=c(~rs, ~prop_type, ~rs:prop_type))
-pp_stumpweight_emm <- emmeans(pp_stumpweight_mm, specs=c(~rs, ~prop_type, ~rs:prop_type))
-pp_stumpdia_emm <- emmeans(pp_stumpdia_mm, specs=c(~rs, ~prop_type, ~rs:prop_type))
-pp_lai_emm <- emmeans(pp_lai_mm, specs=c(~rs, ~prop_type, ~rs:prop_type))
-pp_di_emm <- emmeans(pp_di_mm, specs=c(~rs, ~prop_type, ~rs:prop_type))
-pp_thick_emm <- emmeans(pp_thick_mm, specs=c(~rs, ~prop_type, ~rs:prop_type))
-pp_color_emm <- emmeans(pp_color_mm, specs=c(~rs, ~prop_type, ~rs:prop_type))
-pp_soildens_emm <- emmeans(pp_soildens_mm, specs=c(~rs, ~prop_type, ~rs:prop_type))
-pp_soilvwc_emm <- emmeans(pp_soilvwc_mm, specs=c(~rs, ~prop_type, ~rs:prop_type))
-# AOV List
-aov_list = list(pp_rs_aov, pp_sc_aov, pp_height_aov, pp_canvol_aov, pp_rssc_aov, pp_crowndepth_aov, pp_stumpdepth_aov, pp_stumpweight_aov, pp_stumpdia_aov,
-                pp_lai_aov, pp_di_aov, pp_thick_aov, pp_color_aov, pp_soildens_aov, pp_soilvwc_aov)
-# CLD Lists
-rs_cld_list = list(
-        cld(pp_rs_emm$`emmeans of rs`, Letters = letters, reversed = TRUE), 
-        cld(pp_sc_emm$`emmeans of rs`, Letters = letters, reversed = TRUE),
-        cld(pp_height_emm$`emmeans of rs`, Letters = letters, reversed = TRUE),
-        cld(pp_canvol_emm$`emmeans of rs`, Letters = letters, reversed = TRUE),
-        cld(pp_rssc_emm$`emmeans of rs`, Letters = letters, reversed = TRUE),
-        cld(pp_crowndepth_emm$`emmeans of rs`, Letters = letters, reversed = TRUE),
-        cld(pp_stumpdepth_emm$`emmeans of rs`, Letters = letters, reversed = TRUE),
-        cld(pp_stumpweight_emm$`emmeans of rs`, Letters = letters, reversed = TRUE),
-        cld(pp_stumpdia_emm$`emmeans of rs`, Letters = letters, reversed = TRUE),
-        cld(pp_lai_emm$`emmeans of rs`, Letters = letters, reversed = TRUE),
-        cld(pp_di_emm$`emmeans of rs`, Letters = letters, reversed = TRUE),
-        cld(pp_thick_emm$`emmeans of rs`, Letters = letters, reversed = TRUE),
-        cld(pp_color_emm$`emmeans of rs`, Letters = letters, reversed = TRUE),
-        cld(pp_soildens_emm$`emmeans of rs`, Letters = letters, reversed = TRUE),
-        cld(pp_soilvwc_emm$`emmeans of rs`, Letters = letters, reversed = TRUE)
-)
+columns <- c("rs_cm", 'sc_cm', 'height_cm', "can_vol_m3", "sc_rs_ratio", "crown_depth_cm", "stump_depth_cm", "drp_cm", "stump_weight_g", "stump_dia_mm", "LAI", "di", "thick", "color", "soil_dens_kpa", "soil_vmc_pct", "depth_diff")
 
-prop_cld_list = list(
-        cld(pp_rs_emm$`emmeans of prop_type`, Letter = letters, reversed = TRUE), 
-        cld(pp_sc_emm$`emmeans of prop_type`, Letters = letters, reversed = TRUE),
-        cld(pp_height_emm$`emmeans of prop_type`, Letters = letters, reversed = TRUE),
-        cld(pp_canvol_emm$`emmeans of prop_type`, Letters = letters, reversed = TRUE),
-        cld(pp_rssc_emm$`emmeans of prop_type`, Letters = letters, reversed = TRUE),
-        cld(pp_crowndepth_emm$`emmeans of prop_type`, Letters = letters, reversed = TRUE),
-        cld(pp_stumpdepth_emm$`emmeans of prop_type`, Letters = letters, reversed = TRUE),
-        cld(pp_stumpweight_emm$`emmeans of prop_type`, Letters = letters, reversed = TRUE),
-        cld(pp_stumpdia_emm$`emmeans of prop_type`, Letters = letters, reversed = TRUE),
-        cld(pp_lai_emm$`emmeans of prop_type`, Letters = letters, reversed = TRUE),
-        cld(pp_di_emm$`emmeans of prop_type`, Letters = letters, reversed = TRUE),
-        cld(pp_thick_emm$`emmeans of prop_type`, Letters = letters, reversed = TRUE),
-        cld(pp_color_emm$`emmeans of prop_type`, Letters = letters, reversed = TRUE),
-        cld(pp_soildens_emm$`emmeans of prop_type`, Letters = letters, reversed = TRUE),
-        cld(pp_soilvwc_emm$`emmeans of prop_type`, Letters = letters, reversed = TRUE)
-)
+name_vec <- c("RS Circ. (cm)", "SC Circ. (cm)", "Tree Height (cm)", "Tree Canopy Volume (m3)", "SC/RS", "Crown Depth (cm)", "Stump Depth (cm)", "Root Plate Depth (cm)", "Stump Mass (g)", "Stump Dia. (mm)", "LAI", "Disease Index", "Canopy Thickness", "Canopy Color", "Soil Density (kPa)", "Soil VMC (%)", "Crown-Stump Depth Difference (cm)")
 
-rs_prop_cld_list = list(
-        cld(pp_rs_emm$`emmeans of rs, prop_type`, Letters = letters, reversed = TRUE), 
-        cld(pp_sc_emm$`emmeans of rs, prop_type`, Letters = letters, reversed = TRUE),
-        cld(pp_height_emm$`emmeans of rs, prop_type`, Letters = letters, reversed = TRUE),
-        cld(pp_canvol_emm$`emmeans of rs, prop_type`, Letters = letters, reversed = TRUE),
-        cld(pp_rssc_emm$`emmeans of rs, prop_type`, Letters = letters, reversed = TRUE),
-        cld(pp_crowndepth_emm$`emmeans of rs, prop_type`, Letters = letters, reversed = TRUE),
-        cld(pp_stumpdepth_emm$`emmeans of rs, prop_type`, Letters = letters, reversed = TRUE),
-        cld(pp_stumpweight_emm$`emmeans of rs, prop_type`, Letters = letters, reversed = TRUE),
-        cld(pp_stumpdia_emm$`emmeans of rs, prop_type`, Letters = letters, reversed = TRUE),
-        cld(pp_lai_emm$`emmeans of rs, prop_type`, Letters = letters, reversed = TRUE),
-        cld(pp_di_emm$`emmeans of rs, prop_type`, Letters = letters, reversed = TRUE),
-        cld(pp_thick_emm$`emmeans of rs, prop_type`, Letters = letters, reversed = TRUE),
-        cld(pp_color_emm$`emmeans of rs, prop_type`, Letters = letters, reversed = TRUE),
-        cld(pp_soildens_emm$`emmeans of rs, prop_type`, Letters = letters, reversed = TRUE),
-        cld(pp_soilvwc_emm$`emmeans of rs, prop_type`, Letters = letters, reversed = TRUE)
-)
+ft1_rs_df <- data.frame('rs' = c('US-1516', 'US-812', 'US-897', 'US-942'))
+ft1_prop_df <- data.frame('prop_type' = c('ct', 'mpg', 'sd'))
+ft1_rsprop_df <- data.frame('rs' = rep(c('US-1516', 'US-812', 'US-897', 'US-942'), each=3),
+                            'prop_type' = rep(c('ct', 'mpg', 'sd'), times=4))
+var_df <- data.frame('var' = c('block', 'Residual'))
 
-# Data frame construction
-name_vec <- c('rs_cir_cm', 'sc_cir_cm', 'tree_height_cm', 'tree_can_vol_m3', 'rs_sc_ratio', 'crown_depth_cm', 'stump_depth_cm',
-              'stump_mass_g', 'stump_dia_mm', 'LAI', 'disease_index', 'thickness_rating', 'color_rating', 'plot_soil_density_kpa', 'plot_soil_VMC_pct')
-pp_rs_df <- data.frame('rs' = c('US-1516', 'US-812', 'US-897', 'US-942'))
-pp_rs_aov <- c('ANOVA')
-pp_prop_df <- data.frame('prop_type' = c('ct', 'mpg', 'sd'))
-pp_prop_aov <- c('ANOVA')
+ft1_rs_pvalue <- c('p-value')
+ft1_prop_pvalue <- c('p-value')
+ft1_rsprop_pvalue <- c('p-value', '')
 
-for (i in 1:length(rs_cld_list)) {
-
-        tmp <- data.frame(rs_cld_list[[i]]) %>% 
-                mutate(mean_letter = paste(sprintf("%.4f", emmean), trimws(.group, 'both'), sep=' '))
-        pp_rs_df <- pp_rs_df %>%
-                left_join(tmp[,c(1, 8)], by='rs')
-        p_value <- aov_list[[i]]$"Pr(>F)"[1]
-        pp_rs_aov <- c(pp_rs_aov, sprintf("%.4f", p_value))
-
+for (trait in columns) {
+        # Construct formulae
+        f <- paste(trait, " ~ rs * prop_type + (1|block)", sep="")
         
-        tmp <- data.frame(prop_cld_list[[i]]) %>% 
-                mutate(mean_letter = paste(sprintf("%.4f", emmean), trimws(.group, 'both'), sep=' '))
-        pp_prop_df <- pp_prop_df %>%
+        # lmer model
+        lmer_model <- lmer(f, data=pp_tree_agg)
+        
+        # aov object
+        aov_obj <- anova(lmer_model)
+        
+        # var object
+        ranefvar <- as.data.frame(VarCorr(lmer_model)) %>% 
+                dplyr::select(grp, vcov)
+        
+        var_df <- var_df %>% 
+                left_join(ranefvar, by=join_by(var==grp))
+        
+        # emmeans object
+        emm <- emmeans(lmer_model, spec=c(~rs, ~prop_type, ~rs:prop_type))
+        
+        # # CLD objects
+        rs_cld <- cld(emm$`emmeans of rs`, reversed=TRUE, Letters = letters)
+        prop_cld <- cld(emm$`emmeans of prop_type`, reversed=TRUE, Letters = letters)
+        rsprop_cld <- cld(emm$`emmeans of rs, prop_type`, reversed=TRUE, Letters = letters)
+        
+        tmp <- data.frame(rs_cld) %>%
+                mutate(mean_letter = paste(sprintf("%.3f", emmean), trimws(.group, 'both'), sep=' '))
+        ft1_rs_df <- ft1_rs_df %>%
+                left_join(tmp[,c(1, 8)], by='rs')
+
+        tmp <- data.frame(prop_cld) %>%
+                mutate(mean_letter = paste(sprintf("%.3f", emmean), trimws(.group, 'both'), sep=' '))
+        ft1_prop_df <- ft1_prop_df %>%
                 left_join(tmp[,c(1, 8)], by='prop_type')
-        p_value <- aov_list[[i]]$"Pr(>F)"[2]
-        pp_prop_aov <- c(pp_prop_aov, sprintf("%.4f", p_value))
+
+        tmp <- data.frame(rsprop_cld) %>%
+                mutate(mean_letter = paste(sprintf("%.3f", emmean), trimws(.group, 'both'), sep=' '))
+        ft1_rsprop_df <- ft1_rsprop_df %>%
+                left_join(tmp[,c(1, 2, 9)], by=c('rs', 'prop_type'))
+        
+        ft1_rs_pvalue <- c(ft1_rs_pvalue, aov_obj$`Pr(>F)`[1])
+        ft1_prop_pvalue <- c(ft1_prop_pvalue, aov_obj$`Pr(>F)`[2])
+        ft1_rsprop_pvalue <- c(ft1_rsprop_pvalue, aov_obj$`Pr(>F)`[3])
+        
 }
-colnames(pp_rs_df)[2:16] <- name_vec
-colnames(pp_prop_df)[2:16] <- name_vec
 
-pp_growth_rs_df <- rbind(pp_rs_df, pp_rs_aov)
-pp_growth_prop_df <- rbind(pp_prop_df, pp_prop_aov)
+colnames(ft1_rs_df)[2:18] <- name_vec
+colnames(ft1_prop_df)[2:18] <- name_vec
+colnames(ft1_rsprop_df)[3:19] <- name_vec
+colnames(var_df)[2:18] <- name_vec
 
+ft1_rs_df <- rbind(ft1_rs_df, ft1_rs_pvalue)
+ft1_prop_df <- rbind(ft1_prop_df, ft1_prop_pvalue)
+ft1_rsprop_df <- rbind(ft1_rsprop_df, ft1_rsprop_pvalue)
 
+write.csv(ft1_rs_df, '../../manuscripts/analysis_output_tables/ft1_tree_growth_rs_table.csv')
+write.csv(ft1_prop_df, '../../manuscripts/analysis_output_tables/ft1_tree_growth_prop_table.csv')
+write.csv(ft1_rsprop_df, '../../manuscripts/analysis_output_tables/ft1_tree_growth_rsprop_table.csv')
+write.csv(var_df, '../../manuscripts/analysis_output_tables/ft1_tree_growth_variance_table.csv')
 ```
 
 ```{r lmer cleanup environment}
@@ -1126,267 +1031,106 @@ rm(list=c('pa_rs_df', 'pa_prop_df', 'pa_rs_prop_df'))
 rm(list=c('pp_rs_df', 'pp_prop_df', 'pp_rs_prop_df'))
 ```
 
+
 # Write out table objects
 
 ## PROP ADAIR
 ```{r prop-adair-write-output}
-# Root Logistic GLMER
-write.csv(pa_root_rs_df, '../../manuscripts/analysis_output_tables/pa_root_logistic_rs.csv')
-write.csv(pa_root_prop_df, '../../manuscripts/analysis_output_tables/pa_root_logistic_prop.csv')
-
-# Continuous root LMER
-write.csv(pa_ctsroots_rs_df,  '../../manuscripts/analysis_output_tables/pa_root_cts_rs.csv')
-write.csv(pa_ctsroots_prop_df, '../../manuscripts/analysis_output_tables/pa_root_cts_prop.csv')
-write.csv(pa_ctsroots_rs_prop_df, '../../manuscripts/analysis_output_tables/pa_root_cts_rsprop.csv')
-
-# Root count data GLMER
-write.csv(pa_counts_rs_df, '../../manuscripts/analysis_output_tables/pa_root_counts_rs.csv')
-write.csv(pa_counts_prop_df, '../../manuscripts/analysis_output_tables/pa_root_counts_prop.csv')
-write.csv(pa_counts_rs_prop_df, '../../manuscripts/analysis_output_tables/pa_root_counts_rsprop.csv')
-
-# Tree growth LMER
-write.csv(pa_growth_rs_df, '../../manuscripts/analysis_output_tables/pa_root_growth_rs.csv')
-write.csv(pa_growth_prop_df, '../../manuscripts/analysis_output_tables/pa_root_growth_prop.csv')
 ```
 
 ## PROP PICOS
 ```{r prop-picos-write-output}
-# Root Logistic GLMER
-write.csv(pp_root_rs_df, '../../manuscripts/analysis_output_tables/pp_root_logistic_rs.csv')
-write.csv(pp_root_prop_df, '../../manuscripts/analysis_output_tables/pp_root_logistic_prop.csv')
-
-# Continuous root LMER
-write.csv(pp_ctsroots_rs_df,  '../../manuscripts/analysis_output_tables/pp_root_cts_rs.csv')
-write.csv(pp_ctsroots_prop_df, '../../manuscripts/analysis_output_tables/pp_root_cts_prop.csv')
-write.csv(pp_ctsroots_rs_prop_df, '../../manuscripts/analysis_output_tables/pp_root_cts_rsprop.csv')
-
-# Root count data GLMER
-write.csv(pp_counts_rs_df, '../../manuscripts/analysis_output_tables/pp_root_counts_rs.csv')
-write.csv(pp_counts_prop_df, '../../manuscripts/analysis_output_tables/pp_root_counts_prop.csv')
-write.csv(pp_counts_rs_prop_df, '../../manuscripts/analysis_output_tables/pp_root_counts_rsprop.csv')
-
-# Tree growth LMER
-write.csv(pp_growth_rs_df, '../../manuscripts/analysis_output_tables/pp_root_growth_rs.csv')
-write.csv(pp_growth_prop_df, '../../manuscripts/analysis_output_tables/pp_root_growth_prop.csv')
-```
-
-```{r}
-# 
-# mat <- p_summary[complete.cases(p_summary),c(15:22, 39)]
-# cormat <-  round(cor(mat), 2)
-# library(reshape2)
-# cormat_melt <- melt(cormat)
-# 
-# heatmap <- ggplot(cormat_melt, aes(x = Var1, y = Var2, fill = value))+
-#         geom_tile()+
-#         scale_fill_viridis_c(option = 'D')+
-#         labs(title= "Absolute Root Counts Correlation HeatMap", fill = "Pearson's r")+
-#         theme(axis.text.x = element_text(angle = 90, vjust = .2))
-# 
-# ggplotly(heatmap)
-# 
-# 
-# mat <- p_summary[complete.cases(p_summary),c(23:30, 39)]
-# cormat <-  round(cor(mat), 2)
-# library(reshape2)
-# cormat_melt <- melt(cormat)
-# 
-# heatmap <- ggplot(cormat_melt, aes(x = Var1, y = Var2, fill = value))+
-#         geom_tile()+
-#         scale_fill_viridis_c(option = 'D')+
-#         labs(title= "Root Type Proportions Correlation HeatMap", fill = "Pearson's r")+
-#         theme(axis.text.x = element_text(angle = 90, vjust = .2))
-# 
-# ggplotly(heatmap)
-# 
-# 
-# mat <- p_summary[complete.cases(p_summary),8:44]
-# cormat <-  round(cor(mat), 2)
-# library(reshape2)
-# cormat_melt <- melt(cormat)
-# 
-# 
-# heatmap <- (ggplot(cormat_melt, aes(x = Var1, y = Var2, fill = value))+
-#         geom_tile()+
-#         scale_fill_viridis_c(option = 'C')+
-#         labs(title= "Root Type Proportions Correlation HeatMap", fill = "Pearson's r")+
-#         theme(axis.text.x = element_text(angle = 90, vjust = .2)))
-# 
-# ggplotly(heatmap)
-# 
-# ggplot(p_summary, aes(x = vert_e_depth, y = can_vol, color = rs))+
-#         geom_point(size = 3, alpha = .7)+
-#         scale_color_viridis_d(option = 'D')
-# 
-# new_mat <- p_summary[complete.cases(p_summary), c(8:10, 15:39)]
-# cormat <-  round(cor(new_mat), 2)
-# library(reshape2)
-# cormat_melt <- melt(cormat)
-# 
-# heatmap <- ggplot(cormat_melt, aes(x = Var1, y = Var2, fill = value))+
-#         geom_tile()+
-#         scale_fill_viridis_c(option = 'C')+
-#         labs(title= "Root Type Proportions Correlation HeatMap", fill = "Pearson's r")+
-#         theme(axis.text.x = element_text(angle = 90, vjust = .2))
-```
-
-```{r}
-# ggpairs(p_summary[,c(23:36,39)], aes(color = p_summary$method))+
-#         scale_color_viridis_d(option = 'D', begin = .2, end = .8)+
-#         scale_fill_viridis_d(option = 'D', begin = .2, end = .8)
-# 
-# ggpairs(p_summary[,c(23:27,38:39)], aes(color = p_summary$method))+
-#         scale_color_viridis_d(option = 'D', begin = .2, end = .8)+
-#         scale_fill_viridis_d(option = 'D', begin = .2, end = .8)
-
-```
-
-```{r}
-# ggplot(p_summary, aes(x = rs, y = can_vol, fill = rs))+
-#         geom_boxplot()+
-#         facet_wrap(~method, labeller = labeller(method = c('ct' = 'Cutting', 'mpg' = 'Tissue Culture', 'sd' = 'Seedling')))+
-#         scale_fill_viridis_d(option = 'D', begin = .2, end = .8)+
-#         theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1, ))+
-#         labs(title = 'Canopy Volume by Propagation Method', fill = 'Rootstock', x = 'Rootstock', y = 'Canopy Volume (m3)')
-# 
-# library(agricolae)
-# 
-# lm1 <- lm(can_vol ~ rs * method, data = p_summary)
-# summary(lm1)
-# anova(lm1)
-# 
-# (HSD.test(lm1, 'rs'))
-# 
-# lm2 <- lm(pr_root_bound ~ rs*method, p_summary)
-# summary(lm2)
-# anova(lm2)
-# (HSD.test(lm2, 'rs'))
-# 
-# lm3 <- lm(seg_depth ~ rs*method, p_summary)
-# summary(lm3)
-# anova(lm3)
-# (HSD.test(lm3, c('rs', 'method')))
-# 
-# 
-# lm4 <- lm(can_vol ~ rs*method, data = p_summary)
-# summary(lm4)
-# anova(lm4)
-# 
-# 
-# ggplot(p_summary, aes(x = pr_root_bound, y = rs_cm, color = method))+
-#         geom_point(size = 4, alpha = .6)+
-#         scale_color_viridis_d(option = 'D', begin = .2, end = .8)+
-#         labs(title = 'Rootstock Trunk Circumference\nCorrelation with Pot-Bound Root Proportion',
-#              x = "Proportion of Pot-bound Roots",
-#              y = "Rootstock Circumference (cm)",
-#              color = 'Propagation\nMethod')+
-#         geom_smooth(aes(x = pr_root_bound, y = rs_cm), color = 'blue',method = 'lm')+
-#         facet_wrap(~rs)
-# 
-# ggplot(p_summary, aes(x = pr_lateral, y = rs_cm, color = method))+
-#         geom_point(size = 4, alpha = .6)+
-#         scale_color_viridis_d(option = 'D', begin = .2, end = .8)+
-#         labs(title = 'Rootstock Trunk Circumference\nCorrelation with Lateral Root Proportion',
-#              x = "Proportion of Lateral Roots",
-#              y = "Rootstock Circumference (cm)",
-#              color = 'Propagation\nMethod')+
-#         geom_smooth(aes(x = pr_lateral, y = rs_cm), color = 'blue',method = 'lm')+
-#         facet_wrap(~rs)
-# 
-# 
-# ggplot(p_summary, aes(x = root_bound, y = rs_cm, color = method))+
-#         geom_point(size = 4, alpha = .6)+
-#         scale_color_viridis_d(option = 'D', begin = .2, end = .8)+
-#         labs(title = 'Rootstock Trunk Circumference\nCorrelation with Pot-Bound Root Count',
-#              x = "Pot-bound Root Count",
-#              y = "Rootstock Circumference (cm)",
-#              color = 'Propagation\nMethod')+
-#         geom_smooth(aes(x = root_bound, y = rs_cm), color = 'blue',method = 'lm')+
-#         facet_wrap(~rs)
-# 
-# ggplot(p_summary, aes(x = lateral, y = rs_cm, color = method))+
-#         geom_point(size = 4, alpha = .6)+
-#         scale_color_viridis_d(option = 'D', begin = .2, end = .8)+
-#         labs(title = 'Rootstock Trunk Circumference\nCorrelation with Lateral Root Count',
-#              x = "Lateral Root Count",
-#              y = "Rootstock Circumference (cm)",
-#              color = 'Propagation\nMethod')+
-#         geom_smooth(aes(x = lateral, y = rs_cm), color = 'blue',method = 'lm')+
-#         facet_wrap(~rs)
-# 
-# ggplot(p_summary, aes(x = n_seg, y = rs_cm, color = method))+
-#         geom_point(size = 4, alpha = .6)+
-#         scale_color_viridis_d(option = 'D', begin = .2, end = .8)+
-#         labs(title = 'Rootstock Trunk Circumference\nCorrelation with Total Root Count',
-#              x = "Total Root Count",
-#              y = "Rootstock Circumference (cm)",
-#              color = 'Propagation\nMethod')+
-#         geom_smooth(aes(x = n_seg, y = rs_cm), color = 'blue',method = 'lm')+
-#         facet_wrap(~rs)
-# 
-# 
-# ggplot(p_summary, aes(x = pb_lat_ratio, y = rs_cm, color = method))+
-#         geom_point(size = 4, alpha = .6)+
-#         scale_color_viridis_d(option = 'D', begin = .2, end = .8)+
-#         labs(title = 'Rootstock Trunk Circumference\nCorrelation with Total Root Count',
-#              x = "Total Root Count",
-#              y = "Rootstock Circumference (cm)",
-#              color = 'Propagation\nMethod')+
-#         geom_smooth(aes(x = pb_lat_ratio, y = rs_cm), color = 'blue',method = 'lm')+
-#         facet_wrap(~rs)
 
 ```
 
 
 ```{r}
-# gof_glm <- function(model){
-#         pchisq(model$deviance, model$df.residual, lower.tail = FALSE)
-# }
-# overdispersion <- function(model){
-#         sum(residuals(model,type ="pearson")^2)/model$df.residual
-# }
-# gof_glm <- function(model){
-#         pchisq(model$deviance, model$df.residual, lower.tail = FALSE)
-# }
-# 
-# gof_vec <- c()
-# model_obj <- list(glma1, glma2, glma3, glma4, glma5, glma6, glma7, glma8, glma9, glma10)
-# for(model in model_obj){
-#         gof_vec <- c(gof_vec, gof_glm(model))
-# }
-# 
-# names(gof_vec) <- c('lateral', 'vertical', 'straight', 'curved', 'root_bound', 'knotted', 'broken', 'branched', 'main_seg', 'n_seg')
-# 
-# print(gof_vec)
+
+```
+
+```{r}
+# Diff models
+pp_diff_mm <- lmer(depth_diff ~ rs * prop_type + (1|block), data=pp_tree_agg)
+pa_diff_mm <- lmer(depth_diff ~ rs * prop_type + (1|block), data=pa_tree_agg)
+
+anova(pp_diff_mm)
+anova(pa_diff_mm)
+
+pp_diff_emm <- emmeans(pp_diff_mm, c(~rs, ~prop_type))
+pa_diff_emm <- emmeans(pa_diff_mm, c(~rs, ~prop_type))
+
+pp_diff_rs_cld <- cld(pp_diff_emm$`emmeans of rs`, Letters=letters, reversed=TRUE) %>% 
+        arrange(rs)
+pp_diff_prop_cld <- cld(pp_diff_emm$`emmeans of prop_type`, Letters=letters, reversed=TRUE) %>% 
+        arrange(prop_type)
+
+pa_diff_rs_cld <- cld(pa_diff_emm$`emmeans of rs`, Letters=letters, reversed=TRUE) %>% 
+        arrange(rs)
+pa_diff_prop_cld <- cld(pa_diff_emm$`emmeans of prop_type`, Letters=letters, reversed=TRUE) %>% 
+        arrange(prop_type)
+
+
+
+pp_diff_rs_cld
+pp_diff_prop_cld
+
+pa_diff_rs_cld
+pa_diff_prop_cld
 ```
 
 
 ```{r}
-# pca1 <- prcomp(scale(p_summary[complete.cases(p_summary),c(8:35)]))
-# fviz_pca_ind(pca1, habillage = p_summary$rs[complete.cases(p_summary)], addEllipses = TRUE, geom.ind = 'point', ellipse.level = .8)+
-#         scale_color_viridis_d(option = 'D', begin = .2, end = .8)+
-#         scale_fill_viridis_d(option = 'D', begin = .2, end = .8)+
-#         labs(title = 'PROP_PICOS PCA plot\nRootstock Groups')+
-#         theme_gray()
-# 
-# fviz_pca_ind(pca1, habillage = p_summary$method[complete.cases(p_summary)], addEllipses = TRUE, geom.ind = 'point', ellipse.level = .8)+
-#         scale_color_viridis_d(option = 'D', begin = .2, end = .8)+
-#         scale_fill_viridis_d(option = 'D', begin = .2, end = .8)+
-#         labs(title = 'PROP_PICOS PCA plot\nPropagation Method Groups')+
-#         theme_gray()
+pp_rs_diff_plot = ggplot(data=pp_tree_agg, aes(x=rs, y=depth_diff, fill=rs))+
+        geom_violin(alpha=0.8)+
+        geom_point(position = position_jitterdodge(), color='black', alpha=.6, size=1)+
+        scale_fill_viridis_d(option='D', begin=.2, end=.8)+
+        theme_classic()+
+        labs(x='Rootstock Variety', y="Crown - Stump Depth Difference (cm)")+
+        theme(legend.position = 'None')+
+        geom_label(data=pp_diff_rs_cld, aes(x=rs, y=0, label=paste(round(emmean,2), trimws(.group))), 
+                  inherit.aes=FALSE,
+                  fill='white')
+
+pp_prop_diff_plot = ggplot(data=pp_tree_agg, aes(x=prop_type, y=depth_diff, fill=prop_type))+
+        geom_violin(alpha=0.8)+
+        geom_point(position = position_jitterdodge(), color='black', alpha=.6, size=1)+
+        scale_fill_viridis_d(option='D', begin=.2, end=.8)+
+        theme_classic()+
+        labs(x='Propagation Method', y="Crown - Stump Depth Difference (cm)")+
+        theme(legend.position = 'None')+
+        geom_label(data=pp_diff_prop_cld, aes(x=prop_type, y=0, label=paste(round(emmean,2), trimws(.group))), 
+                  inherit.aes=FALSE,
+                  fill='white')
+
+pp_rs_diff_plot
+pp_prop_diff_plot
 ```
 
+
 ```{r}
-# pca2 <- prcomp(scale(a_summary[complete.cases(a_summary),c(8:35)]))
-# fviz_pca_ind(pca2, habillage = a_summary$rs[complete.cases(a_summary)], addEllipses = TRUE, geom.ind = 'point', ellipse.level = .8)+
-#         scale_color_viridis_d(option = 'D', begin = .2, end = .8)+
-#         scale_fill_viridis_d(option = 'D', begin = .2, end = .8)+
-#         labs(title = 'PROP_ADAIR PCA plot\nRootstock Groups')+
-#         theme_gray()
-# 
-# fviz_pca_ind(pca2, habillage = a_summary$method[complete.cases(a_summary)], addEllipses = TRUE, geom.ind = 'point', ellipse.level = .8)+
-#         scale_color_viridis_d(option = 'D', begin = .2, end = .8)+
-#         scale_fill_viridis_d(option = 'D', begin = .2, end = .8)+
-#         labs(title = 'PROP_ADAIR PCA plot\nPropagation Method Groups')+
-#         theme_gray()
+pa_rs_diff_plot = ggplot(data=pa_tree_agg, aes(x=rs, y=depth_diff, fill=rs))+
+        geom_violin(alpha=0.8)+
+        geom_point(position = position_jitterdodge(), color='black', alpha=.6, size=1)+
+        scale_fill_viridis_d(option='D', begin=.2, end=.8)+
+        theme_classic()+
+        labs(x='Rootstock Variety', y="Crown - Stump Depth Difference (cm)")+
+        theme(legend.position = 'None')+
+        geom_label(data=pa_diff_rs_cld, aes(x=rs, y=0, label=paste(round(emmean,2), trimws(.group))), 
+                  inherit.aes=FALSE,
+                  fill='white')
+
+pa_prop_diff_plot = ggplot(data=pa_tree_agg, aes(x=prop_type, y=depth_diff, fill=prop_type))+
+        geom_violin(alpha=0.8)+
+        geom_point(position = position_jitterdodge(), color='black', alpha=.6, size=1)+
+        scale_fill_viridis_d(option='D', begin=.2, end=.8)+
+        theme_classic()+
+        labs(x='Propagation Method', y="Crown - Stump Depth Difference (cm)")+
+        theme(legend.position = 'None')+
+        geom_label(data=pa_diff_prop_cld, aes(x=prop_type, y=0, label=paste(round(emmean,2), trimws(.group))), 
+                  inherit.aes=FALSE,
+                  fill='white')
+
+pa_rs_diff_plot
+pa_prop_diff_plot
 ```
+

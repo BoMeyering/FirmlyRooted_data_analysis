@@ -86,10 +86,8 @@ if __name__ == '__main__':
         h_r = measurements['h_r'].values[0]
         crown_depth = measurements['crown_depth_cm'].values[0]
 
-
         results['ang_rad'] = results['ang_y']*np.pi/180
         results['torque'] = results['force_n'] * h_e * np.sin(results['ang_rad'])
-
 
         ### DEPRECATED ###
         # calculate perpendicular and axial effort force components 
@@ -102,14 +100,13 @@ if __name__ == '__main__':
         results['root_resistance_force_n'] = results['force_n'] * h_e / h_r
         
 
-        # calculate effort at 3 feet above soil level
-        std_h_e = crown_depth + 91.44
-        # results['std_trunk_effort_n'] = results['winch_force_comp_perp_n'] * h_e / std_h_e
+        # calculate effort at 30cm above soil level
+        std_h_e = crown_depth + 30
         results['std_trunk_effort_n'] = results['force_n'] * h_e / std_h_e
-        # print(results)
-        # print("F_e: ", results['force_n'])
-        # print("F_r: ", results['root_resistance_force_n'])
-        # print("F_e_std: ", results['std_trunk_effort_n'])
+        results['std_trunk_moment'] = results['std_trunk_effort_n'] * std_h_e * np.sin(results['ang_rad']) / 100  # Torque (turning moment) measured in Newton meters (N * m)
+
+        results['he'] = h_e
+        results['std_he'] = std_h_e
         
 
         out_path = os.path.join('./data/processed/excavation_data/processed_force_profiles/prop_adair', i+'.csv')
